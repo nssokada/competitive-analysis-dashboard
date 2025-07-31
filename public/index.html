@@ -1,0 +1,2027 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Pharmaceutical Company Data Dashboard</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Header */
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 1.5rem 2rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.5rem;
+    }
+
+    /* Navigation */
+    .nav-tabs {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1rem;
+      border-bottom: 2px solid rgba(255,255,255,0.1);
+      padding-bottom: 1rem;
+      overflow-x: auto;
+    }
+
+    .nav-tab {
+      padding: 0.75rem 1.5rem;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px 8px 0 0;
+      cursor: pointer;
+      transition: all 0.3s;
+      font-weight: 500;
+      position: relative;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .nav-tab:hover {
+      background: rgba(255,255,255,0.1);
+      transform: translateY(-2px);
+    }
+
+    .nav-tab.active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-color: transparent;
+      color: white;
+    }
+
+    /* Main Content */
+    .content {
+      padding: 2rem;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    .view {
+      display: none;
+      animation: fadeIn 0.5s;
+    }
+
+    .view.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Cards */
+    .card {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      transition: all 0.3s;
+      backdrop-filter: blur(10px);
+    }
+
+    .card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 30px rgba(102, 126, 234, 0.2);
+      border-color: rgba(102, 126, 234, 0.3);
+    }
+
+    .card h3 {
+      color: #667eea;
+      margin-bottom: 1rem;
+      font-size: 1.25rem;
+    }
+
+    /* Grid Layout */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+      gap: 1.5rem;
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      background: rgba(102, 126, 234, 0.2);
+      color: #667eea;
+      border: 1px solid rgba(102, 126, 234, 0.3);
+      margin-right: 0.5rem;
+    }
+
+    .badge.phase {
+      background: rgba(52, 211, 153, 0.2);
+      color: #34d399;
+      border-color: rgba(52, 211, 153, 0.3);
+    }
+
+    .badge.warning {
+      background: rgba(251, 191, 36, 0.2);
+      color: #fbbf24;
+      border-color: rgba(251, 191, 36, 0.3);
+    }
+
+    /* Search and Controls */
+    .controls {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .search-box {
+      flex: 1;
+      min-width: 300px;
+      position: relative;
+    }
+
+    .search-box input {
+      width: 100%;
+      padding: 0.75rem 1rem 0.75rem 3rem;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      color: white;
+      font-size: 1rem;
+      transition: all 0.3s;
+    }
+
+    .search-box input:focus {
+      outline: none;
+      border-color: #667eea;
+      background: rgba(255,255,255,0.08);
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 1rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #666;
+    }
+
+    .filter-btn {
+      padding: 0.75rem 1.5rem;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      color: white;
+      cursor: pointer;
+      transition: all 0.3s;
+      font-size: 1rem;
+      position: relative;
+    }
+
+    .filter-btn:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: #667eea;
+    }
+
+    /* Filter Dropdown */
+    .filter-dropdown {
+      position: relative;
+      display: inline-block;
+    }
+
+    .filter-menu {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      background: rgba(0,0,0,0.95);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 8px;
+      margin-top: 0.5rem;
+      padding: 1rem;
+      display: none;
+      z-index: 100;
+      min-width: 250px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .filter-menu.show {
+      display: block;
+    }
+
+    .filter-option {
+      padding: 0.5rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .filter-option:hover {
+      background: rgba(102, 126, 234, 0.2);
+    }
+
+    .filter-option input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+
+    /* Active Filters */
+    .active-filters {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .filter-tag {
+      background: rgba(102, 126, 234, 0.2);
+      border: 1px solid rgba(102, 126, 234, 0.3);
+      border-radius: 20px;
+      padding: 0.25rem 0.75rem;
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .filter-tag .remove {
+      cursor: pointer;
+      color: #667eea;
+      font-weight: bold;
+      font-size: 1.2rem;
+    }
+
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .stat-card {
+      background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+      border: 1px solid rgba(102, 126, 234, 0.2);
+      border-radius: 12px;
+      padding: 1.5rem;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 2.5rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .stat-label {
+      color: #888;
+      font-size: 0.9rem;
+      margin-top: 0.5rem;
+    }
+
+    /* Compare View */
+    .compare-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 2rem;
+      margin-top: 2rem;
+    }
+
+    .compare-card {
+      background: rgba(255,255,255,0.05);
+      border: 2px solid rgba(102, 126, 234, 0.3);
+      border-radius: 12px;
+      padding: 1.5rem;
+      position: relative;
+    }
+
+    .compare-card.selected {
+      border-color: #667eea;
+      box-shadow: 0 0 20px rgba(102, 126, 234, 0.3);
+    }
+
+    .compare-section {
+      margin-bottom: 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .compare-section:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+    }
+
+    .compare-section h4 {
+      color: #667eea;
+      margin-bottom: 0.75rem;
+      font-size: 1.1rem;
+    }
+
+    .compare-metric {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.5rem 0;
+    }
+
+    .compare-metric .label {
+      color: #888;
+      font-size: 0.9rem;
+    }
+
+    .compare-metric .value {
+      font-weight: 500;
+      text-align: right;
+    }
+
+    /* Enhanced Comparison Selector */
+    .comparison-controls {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .comparison-mode {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    .mode-btn {
+      padding: 0.75rem 1rem;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      color: white;
+      cursor: pointer;
+      transition: all 0.3s;
+      font-size: 0.9rem;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 768px) {
+      .mode-btn {
+        padding: 0.6rem 0.8rem;
+        font-size: 0.85rem;
+      }
+    }
+
+    .mode-btn:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: #667eea;
+    }
+
+    .mode-btn.active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-color: transparent;
+      color: white;
+    }
+
+    .comparison-options {
+      max-height: 400px;
+      overflow-y: auto;
+      padding: 1rem;
+      background: rgba(0,0,0,0.3);
+      border-radius: 8px;
+      margin-top: 1rem;
+    }
+
+    .option-group {
+      margin-bottom: 1.5rem;
+    }
+
+    .option-group h4 {
+      color: #667eea;
+      margin-bottom: 0.75rem;
+      font-size: 1rem;
+    }
+
+    .option-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.5rem;
+      cursor: pointer;
+      border-radius: 6px;
+      transition: all 0.2s;
+      margin-bottom: 0.25rem;
+    }
+
+    .option-item:hover {
+      background: rgba(102, 126, 234, 0.1);
+    }
+
+    .option-item input {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+
+    .option-item label {
+      cursor: pointer;
+      flex: 1;
+    }
+
+    .option-count {
+      color: #888;
+      font-size: 0.85rem;
+    }
+
+    .compare-empty {
+      text-align: center;
+      padding: 3rem;
+      color: #666;
+    }
+
+    /* Network Container */
+    #network-container {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      height: 600px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Timeline */
+    .timeline {
+      position: relative;
+      padding: 2rem 0;
+    }
+
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 30px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(to bottom, #667eea, #764ba2);
+    }
+
+    .timeline-item {
+      position: relative;
+      padding-left: 60px;
+      margin-bottom: 2rem;
+    }
+
+    .timeline-dot {
+      position: absolute;
+      left: 20px;
+      top: 0;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #667eea;
+      border: 3px solid #1a1a2e;
+      z-index: 1;
+    }
+
+    .timeline-content {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+
+    .timeline-date {
+      color: #667eea;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+
+    /* Company Detail View */
+    .company-detail-header {
+      background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+      border: 1px solid rgba(102, 126, 234, 0.2);
+      border-radius: 12px;
+      padding: 2rem;
+      margin-bottom: 2rem;
+    }
+
+    .company-detail-header h2 {
+      font-size: 2rem;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 1rem;
+    }
+
+    .company-meta {
+      display: flex;
+      gap: 2rem;
+      flex-wrap: wrap;
+      margin-top: 1.5rem;
+    }
+
+    .company-meta-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: #aaa;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 2rem;
+      margin-bottom: 2rem;
+    }
+
+    .detail-section {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .detail-section h3 {
+      color: #667eea;
+      margin-bottom: 1.5rem;
+      font-size: 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .detail-list {
+      list-style: none;
+    }
+
+    .detail-list li {
+      padding: 0.75rem 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+    }
+
+    .detail-list li:last-child {
+      border-bottom: none;
+    }
+
+    .detail-label {
+      color: #888;
+      font-size: 0.9rem;
+    }
+
+    .detail-value {
+      text-align: right;
+      font-weight: 500;
+      max-width: 60%;
+    }
+
+    .back-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.5rem;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      color: white;
+      cursor: pointer;
+      transition: all 0.3s;
+      margin-bottom: 2rem;
+      text-decoration: none;
+      font-size: 1rem;
+      font-weight: 500;
+    }
+
+    .back-button:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: #667eea;
+      transform: translateX(-5px);
+    }
+
+    .clickable-card {
+      cursor: pointer;
+      position: relative;
+    }
+
+    .clickable-card::after {
+      content: '→';
+      position: absolute;
+      right: 1.5rem;
+      top: 1.5rem;
+      font-size: 1.5rem;
+      color: #667eea;
+      opacity: 0;
+      transition: all 0.3s;
+    }
+
+    .clickable-card:hover::after {
+      opacity: 1;
+      transform: translateX(5px);
+    }
+
+    .milestone-timeline {
+      position: relative;
+      padding-left: 2rem;
+    }
+
+    .milestone-item {
+      position: relative;
+      padding-bottom: 1.5rem;
+    }
+
+    .milestone-item::before {
+      content: '';
+      position: absolute;
+      left: -2rem;
+      top: 0.5rem;
+      width: 10px;
+      height: 10px;
+      background: #667eea;
+      border-radius: 50%;
+    }
+
+    .milestone-item::after {
+      content: '';
+      position: absolute;
+      left: -1.55rem;
+      top: 1.5rem;
+      bottom: 0;
+      width: 1px;
+      background: rgba(102, 126, 234, 0.3);
+    }
+
+    .milestone-item:last-child::after {
+      display: none;
+    }
+
+    .trial-card-mini {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .trial-card-mini h4 {
+      color: #34d399;
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .partnership-item {
+      background: rgba(118, 75, 162, 0.1);
+      border: 1px solid rgba(118, 75, 162, 0.2);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .partnership-item h4 {
+      color: #764ba2;
+      margin-bottom: 0.5rem;
+    }
+
+    .research-notes-section {
+      background: rgba(251, 191, 36, 0.05);
+      border: 1px solid rgba(251, 191, 36, 0.2);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    .research-notes-section h3 {
+      color: #fbbf24;
+      margin-bottom: 1rem;
+    }
+
+    .note-item {
+      margin-bottom: 1rem;
+      padding: 0.75rem;
+      background: rgba(0,0,0,0.3);
+      border-radius: 8px;
+    }
+
+    .note-item h4 {
+      color: #fbbf24;
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .competitive-landscape {
+      margin-top: 2rem;
+    }
+
+    .competitor-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .competitor-card h4 {
+      color: #667eea;
+      margin-bottom: 0.5rem;
+    }
+
+    .data-quality-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .data-quality-high {
+      background: rgba(52, 211, 153, 0.2);
+      color: #34d399;
+      border: 1px solid rgba(52, 211, 153, 0.3);
+    }
+
+    .data-quality-medium {
+      background: rgba(251, 191, 36, 0.2);
+      color: #fbbf24;
+      border: 1px solid rgba(251, 191, 36, 0.3);
+    }
+
+    .data-quality-low {
+      background: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    /* Responsive improvements */
+    @media (max-width: 1024px) {
+      .nav-tabs {
+        padding-bottom: 0.5rem;
+      }
+
+      .nav-tab {
+        padding: 0.6rem 1rem;
+        font-size: 0.9rem;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .header h1 {
+        font-size: 1.5rem;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .compare-container {
+        grid-template-columns: 1fr;
+      }
+
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .controls {
+        flex-direction: column;
+      }
+
+      .search-box {
+        min-width: 100%;
+      }
+
+      .filter-btn {
+        width: 100%;
+        text-align: center;
+      }
+
+      .company-meta {
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+
+      .detail-list li {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.25rem;
+      }
+
+      .detail-value {
+        text-align: left;
+        max-width: 100%;
+      }
+    }
+
+    .header-detail {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 1.5rem 2rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .header-detail h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+  </style>
+</head>
+<body>
+  <!-- Main Header (for overview pages) -->
+  <div class="header" id="main-header">
+    <h1>Pharmaceutical Company Data Dashboard</h1>
+    <div class="nav-tabs">
+      <div class="nav-tab active" data-view="overview">Overview</div>
+      <div class="nav-tab" data-view="companies">Companies</div>
+      <div class="nav-tab" data-view="programs">Programs</div>
+      <div class="nav-tab" data-view="trials">Clinical Trials</div>
+      <div class="nav-tab" data-view="compare">Compare</div>
+      <div class="nav-tab" data-view="network">Network View</div>
+      <div class="nav-tab" data-view="timeline">Timeline</div>
+    </div>
+  </div>
+
+  <!-- Company Detail Header (hidden by default) -->
+  <div class="header-detail" id="detail-header" style="display: none;">
+    <h1>Company Profile</h1>
+  </div>
+
+  <div class="content">
+    <!-- Overview View -->
+    <div id="overview" class="view active">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="total-companies">2</div>
+          <div class="stat-label">Total Companies</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="total-programs">2</div>
+          <div class="stat-label">Active Programs</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="total-trials">7</div>
+          <div class="stat-label">Clinical Trials</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="total-partnerships">4</div>
+          <div class="stat-label">Partnerships</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Quick Upload</h3>
+        <p>Upload your JSON files to populate the dashboard</p>
+        <input type="file" id="file-upload" accept=".json" multiple style="margin-top: 1rem;">
+        <div id="upload-status" style="margin-top: 1rem;"></div>
+      </div>
+
+      <div class="grid" id="overview-cards">
+        <!-- Recent updates will be populated here -->
+      </div>
+    </div>
+
+    <!-- Companies View -->
+    <div id="companies" class="view">
+      <div class="controls">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="text" placeholder="Search companies..." id="company-search">
+        </div>
+      </div>
+      <div class="grid" id="companies-grid">
+        <!-- Company cards will be populated here -->
+      </div>
+    </div>
+
+    <!-- Programs View -->
+    <div id="programs" class="view">
+      <div class="controls">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="text" placeholder="Search programs..." id="program-search">
+        </div>
+        <div class="filter-dropdown">
+          <button class="filter-btn" id="modality-btn">Filter by Modality</button>
+          <div id="modality-filter" class="filter-menu"></div>
+        </div>
+        <div class="filter-dropdown">
+          <button class="filter-btn" id="target-btn">Filter by Target</button>
+          <div id="target-filter" class="filter-menu"></div>
+        </div>
+        <div class="filter-dropdown">
+          <button class="filter-btn" id="type-btn">Filter by Type</button>
+          <div id="type-filter" class="filter-menu"></div>
+        </div>
+      </div>
+      <div id="active-filters" class="active-filters"></div>
+      <div class="grid" id="programs-grid">
+        <!-- Program cards will be populated here -->
+      </div>
+    </div>
+
+    <!-- Clinical Trials View -->
+    <div id="trials" class="view">
+      <div class="controls">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="text" placeholder="Search trials..." id="trial-search">
+        </div>
+      </div>
+      <div class="grid" id="trials-grid">
+        <!-- Trial cards will be populated here -->
+      </div>
+    </div>
+
+    <!-- Compare View -->
+    <div id="compare" class="view">
+      <div class="comparison-controls">
+        <h3>Compare By:</h3>
+        <div class="comparison-mode">
+          <button class="mode-btn active" data-mode="company">Company</button>
+          <button class="mode-btn" data-mode="modality">Modality Type</button>
+          <button class="mode-btn" data-mode="target">Target Class</button>
+          <button class="mode-btn" data-mode="stage">Development Stage</button>
+          <button class="mode-btn" data-mode="combined">Combined View</button>
+        </div>
+
+        <div id="comparison-options" class="comparison-options">
+          <!-- Options will be populated based on selected mode -->
+        </div>
+      </div>
+
+      <div id="compare-container" class="compare-container">
+        <div class="compare-empty">Select items to compare</div>
+      </div>
+    </div>
+
+    <!-- Network View -->
+    <div id="network" class="view">
+      <div class="card">
+        <h3>Interactive Network Visualization</h3>
+        <p>Explore connections between companies, programs, and partnerships</p>
+      </div>
+      <div id="network-container">
+        <!-- D3.js network visualization will be rendered here -->
+      </div>
+    </div>
+
+    <!-- Timeline View -->
+    <div id="timeline" class="view">
+      <div class="card">
+        <h3>Development Timeline</h3>
+        <p>Track key milestones across all programs</p>
+      </div>
+      <div class="timeline" id="timeline-container">
+        <!-- Timeline items will be populated here -->
+      </div>
+    </div>
+
+    <!-- Company Detail View -->
+    <div id="company-detail" class="view">
+      <button class="back-button" onclick="backToOverview()">
+        <span>←</span> Back to Overview
+      </button>
+      <div id="company-detail-content">
+        <!-- Company details will be populated here -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Global state
+    const state = {
+      companiesData: [],
+      activeFilters: {
+        modality: [],
+        target: [],
+        type: []
+      },
+      compareMode: 'company',
+      selectedItems: new Set(),
+      comparisonGroups: {
+        modality: {},
+        target: {},
+        stage: {}
+      }
+    };
+
+    // Initialize sample data (using both provided samples)
+    const sampleData1 = {
+      metadata: {
+        research_id: "Oncolys_BioPharma_OBP-301_Telomelysin_43",
+        research_date: "2025-07-30"
+      },
+      program_overview: {
+        program_name: "OBP-301 (Telomelysin®)",
+        program_type: "Gene Therapy",
+        target: {
+          primary_target: "hTERT (telomerase reverse transcriptase)",
+          target_class: "Reverse-Transcriptase Catalytic Subunit"
+        },
+        modality: {
+          type: "Oncolytic Virus"
+        }
+      },
+      company_information: {
+        company_name: "Oncolys BioPharma Inc.",
+        company_type: "Public",
+        ticker_symbol: "4588.T",
+        headquarters: {
+          city: "Minato-ku",
+          country: "Japan"
+        },
+        founded_year: 2004,
+        employee_count: 33,
+        company_focus: "Oncolytic viral therapies"
+      },
+      development_status: {
+        current_stage: "Phase I/II",
+        development_timeline: [
+          {
+            date: "2025-01",
+            milestone: "ASCO GI presentation",
+            description: "Final safety and cCR data presented"
+          }
+        ],
+        regulatory_designations: [
+          { designation: "SAKIGAKE" },
+          { designation: "Orphan Drug" }
+        ]
+      },
+      clinical_trials: {
+        total_trials: 7,
+        active_trials: 4,
+        completed_trials: 3,
+        trials: [
+          {
+            trial_id: "NCT03921021",
+            phase: "Phase II",
+            title: "Telomelysin + Pembrolizumab",
+            status: "Recruiting",
+            enrollment: { target: 40, actual: 28 }
+          }
+        ]
+      },
+      partnerships_collaborations: {
+        total_partnerships: 3,
+        partnerships: [
+          {
+            partner: "NRG Oncology/NCI",
+            type: "Clinical collaboration"
+          }
+        ]
+      },
+      clinical_data: {
+        key_efficacy_results: [
+          {
+            metric: "Clinical complete response",
+            result: "100% (13/13)"
+          }
+        ]
+      }
+    };
+
+    const sampleData2 = {
+      metadata: {
+        research_id: "Telos_Biotech_Telovance_113",
+        research_date: "2025-07-31"
+      },
+      program_overview: {
+        program_name: "Telovance™",
+        program_type: "Other (Ancillary Reagent)",
+        target: {
+          primary_target: "TERT",
+          target_class: "Reverse-Transcriptase Catalytic Subunit"
+        },
+        modality: {
+          type: "Protein complex",
+          subtype: "Purified recombinant telomerase holo-enzyme"
+        }
+      },
+      company_information: {
+        company_name: "Telos Biotech, Inc.",
+        company_type: "Private",
+        headquarters: {
+          city: "Brooklyn",
+          state_province: "New York",
+          country: "USA"
+        },
+        founded_year: 2020,
+        employee_count: "UNAVAILABLE",
+        company_focus: "Extending telomeres ex vivo to improve the fitness of cell and gene therapies"
+      },
+      development_status: {
+        current_stage: "Preclinical",
+        development_timeline: [
+          {
+            date: "2025-05",
+            milestone: "ISCT 2025 Innovation-Zone showcase",
+            description: "First public disclosure of partner collaborations."
+          }
+        ]
+      },
+      clinical_trials: {
+        total_trials: 0,
+        active_trials: 0,
+        completed_trials: 0,
+        trials: []
+      },
+      partnerships_collaborations: {
+        total_partnerships: 1,
+        partnerships: [
+          {
+            partner: "Undisclosed CAR-T manufacturer(s)",
+            type: "Co-development"
+          }
+        ]
+      }
+    };
+
+    // Add sample data to state
+    state.companiesData.push(sampleData1, sampleData2);
+
+    // Navigation
+    document.addEventListener('DOMContentLoaded', function () {
+      // Set up navigation
+      document.querySelectorAll('.nav-tab').forEach(tab => {
+        tab.addEventListener('click', function () {
+          const viewName = this.dataset.view;
+
+          document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+          this.classList.add('active');
+
+          document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+          document.getElementById(viewName).classList.add('active');
+
+          if (viewName === 'compare') {
+            initCompareView();
+          }
+        });
+      });
+
+      // File upload
+      document.getElementById('file-upload').addEventListener('change', function (e) {
+        const files = e.target.files;
+        const statusDiv = document.getElementById('upload-status');
+
+        Array.from(files).forEach(file => {
+          const reader = new FileReader();
+          reader.onload = function (event) {
+            try {
+              const data = JSON.parse(event.target.result);
+              const cleanedData = cleanDataObject(data);
+              state.companiesData.push(cleanedData);
+              statusDiv.textContent = 'Loaded ' + state.companiesData.length + ' files';
+              updateAllViews();
+            } catch (error) {
+              statusDiv.textContent = 'Error loading file: ' + error.message;
+            }
+          };
+          reader.readAsText(file);
+        });
+      });
+
+      // Filter button handlers
+      document.getElementById('modality-btn').addEventListener('click', () => toggleFilter('modality'));
+      document.getElementById('target-btn').addEventListener('click', () => toggleFilter('target'));
+      document.getElementById('type-btn').addEventListener('click', () => toggleFilter('type'));
+
+      // Search handlers
+      document.getElementById('company-search').addEventListener('input', function (e) {
+        filterCards('companies-grid', e.target.value);
+      });
+
+      document.getElementById('program-search').addEventListener('input', function (e) {
+        filterCards('programs-grid', e.target.value);
+      });
+
+      document.getElementById('trial-search').addEventListener('input', function (e) {
+        filterCards('trials-grid', e.target.value);
+      });
+
+      updateAllViews();
+    });
+
+    // Cleaning helpers
+    function cleanContentReferences(text) {
+      if (!text || typeof text !== 'string') return text;
+      return text.replace(/:contentReference\[oaicite:\d+\]\{index=\d+\}/g, '');
+    }
+
+    function cleanDataObject(obj) {
+      if (typeof obj !== 'object' || obj === null) {
+        return typeof obj === 'string' ? cleanContentReferences(obj) : obj;
+      }
+      if (Array.isArray(obj)) {
+        return obj.map(item => cleanDataObject(item));
+      }
+      const cleaned = {};
+      for (const key in obj) {
+        if (Object.prototype.hasOwnProperty.call(obj, key)) {
+          cleaned[key] = cleanDataObject(obj[key]);
+        }
+      }
+      return cleaned;
+    }
+
+    function updateAllViews() {
+      state.companiesData = state.companiesData.map(d => cleanDataObject(d));
+      updateOverview();
+      updateCompaniesView();
+      updateProgramsView();
+      updateTrialsView();
+      updateTimelineView();
+      initializeFilters();
+      organizeComparisonGroups();
+    }
+
+    function updateOverview() {
+      document.getElementById('total-companies').textContent = state.companiesData.length;
+      let totalTrials = 0;
+      let totalPartnerships = 0;
+      state.companiesData.forEach(data => {
+        totalTrials += data.clinical_trials?.total_trials || 0;
+        totalPartnerships += data.partnerships_collaborations?.total_partnerships || 0;
+      });
+      document.getElementById('total-programs').textContent = state.companiesData.length;
+      document.getElementById('total-trials').textContent = totalTrials;
+      document.getElementById('total-partnerships').textContent = totalPartnerships;
+    }
+
+    function updateCompaniesView() {
+      const grid = document.getElementById('companies-grid');
+      grid.innerHTML = '';
+      state.companiesData.forEach(data => {
+        const card = createCompanyCard(data);
+        grid.appendChild(card);
+      });
+    }
+
+    function updateProgramsView() {
+      const grid = document.getElementById('programs-grid');
+      grid.innerHTML = '';
+      state.companiesData.forEach((data, index) => {
+        const card = createProgramCard(data, index);
+        grid.appendChild(card);
+      });
+    }
+
+    function updateTrialsView() {
+      const grid = document.getElementById('trials-grid');
+      grid.innerHTML = '';
+      state.companiesData.forEach(data => {
+        if (data.clinical_trials?.trials) {
+          data.clinical_trials.trials.forEach(trial => {
+            const card = createTrialCard(trial, data);
+            grid.appendChild(card);
+          });
+        }
+      });
+    }
+
+    function updateTimelineView() {
+      const container = document.getElementById('timeline-container');
+      container.innerHTML = '';
+      state.companiesData.forEach(data => {
+        if (data.development_status?.development_timeline) {
+          data.development_status.development_timeline.forEach(milestone => {
+            const item = createTimelineItem(milestone, data);
+            container.appendChild(item);
+          });
+        }
+      });
+    }
+
+    function createTimelineItem(milestone, data) {
+      const item = document.createElement('div');
+      item.className = 'timeline-item';
+      const dot = document.createElement('div');
+      dot.className = 'timeline-dot';
+      const content = document.createElement('div');
+      content.className = 'timeline-content';
+      content.innerHTML = '<div class="timeline-date">' + milestone.date + '</div>' +
+        '<h4>' + milestone.milestone + '</h4>' +
+        '<p>' + (milestone.description || '') + '</p>' +
+        '<p style="margin-top: 0.5rem; color: #888; font-size: 0.9rem;">' +
+        '<strong>Company:</strong> ' + (data.company_information.company_name || 'N/A') + '<br>' +
+        '<strong>Program:</strong> ' + (data.program_overview.program_name || 'N/A') +
+        '</p>';
+      item.appendChild(dot);
+      item.appendChild(content);
+      return item;
+    }
+
+    function createCompanyCard(data) {
+      const card = document.createElement('div');
+      card.className = 'card clickable-card';
+      card.onclick = () => showCompanyDetail(data);
+      const company = data.company_information;
+      card.innerHTML = '<h3>' + (company.company_name || '') + '</h3>' +
+        '<p style="color: #888;">' + (company.company_focus || '') + '</p>' +
+        '<div style="margin-top: 1rem;">' +
+        (company.ticker_symbol ? '<span class="badge">' + company.ticker_symbol + '</span>' : '') +
+        '</div>' +
+        '<div style="margin-top: 1rem; color: #888; font-size: 0.9rem;">' +
+        '<div>📍 ' + (company.headquarters?.city || '') + ', ' + (company.headquarters?.country || '') + '</div>' +
+        '<div>👥 ' + (company.employee_count || 'N/A') + ' employees</div>' +
+        '<div>📅 Founded ' + (company.founded_year || 'N/A') + '</div>' +
+        '</div>';
+      return card;
+    }
+
+    function createProgramCard(data, index) {
+      const card = document.createElement('div');
+      card.className = 'card clickable-card';
+      card.dataset.index = index;
+      card.onclick = () => showCompanyDetail(data);
+      const program = data.program_overview;
+      card.innerHTML = '<h3>' + (program.program_name || '') + '</h3>' +
+        '<div style="margin-bottom: 1rem;">' +
+        '<span class="badge">' + (program.program_type || '') + '</span>' +
+        '<span class="badge">' + (program.modality?.type || 'N/A') + '</span>' +
+        '</div>' +
+        '<p><strong>Target:</strong> ' + (program.target?.primary_target || 'N/A') + '</p>' +
+        '<p style="margin-top: 1rem;"><strong>Company:</strong> ' + (data.company_information.company_name || 'N/A') + '</p>' +
+        '<p><strong>Stage:</strong> ' + (data.development_status?.current_stage || 'N/A') + '</p>';
+      return card;
+    }
+
+    function createTrialCard(trial, data) {
+      const card = document.createElement('div');
+      card.className = 'card clickable-card';
+      card.onclick = () => showCompanyDetail(data);
+      card.innerHTML = '<h3>' + (trial.title || '') + '</h3>' +
+        '<div style="margin-bottom: 1rem;">' +
+        '<span class="badge phase">' + (trial.phase || '') + '</span>' +
+        '<span class="badge">' + (trial.status || '') + '</span>' +
+        '</div>' +
+        '<p><strong>Trial ID:</strong> ' + (trial.trial_id || '') + '</p>' +
+        '<p><strong>Enrollment:</strong> ' + ((trial.enrollment?.actual || 0) + '/' + (trial.enrollment?.target || 0)) + '</p>' +
+        '<p><strong>Company:</strong> ' + (data.company_information.company_name || '') + '</p>';
+      return card;
+    }
+
+    function initializeFilters() {
+      const filters = {
+        modality: new Set(),
+        target: new Set(),
+        type: new Set()
+      };
+      state.companiesData.forEach(data => {
+        if (data.program_overview.modality?.type) {
+          filters.modality.add(data.program_overview.modality.type);
+        }
+        if (data.program_overview.target?.primary_target) {
+          filters.target.add(data.program_overview.target.primary_target);
+        }
+        if (data.program_overview.program_type) {
+          filters.type.add(data.program_overview.program_type);
+        }
+      });
+      Object.entries(filters).forEach(([type, values]) => {
+        populateFilterMenu(type, Array.from(values));
+      });
+    }
+
+    function populateFilterMenu(filterType, options) {
+      const menu = document.getElementById(filterType + '-filter');
+      menu.innerHTML = '';
+      options.forEach(option => {
+        const div = document.createElement('div');
+        div.className = 'filter-option';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = filterType + '-' + option;
+        checkbox.value = option;
+        checkbox.addEventListener('change', function () {
+          updateFilter(filterType, option, this.checked);
+        });
+        const label = document.createElement('label');
+        label.htmlFor = checkbox.id;
+        label.textContent = option;
+        div.appendChild(checkbox);
+        div.appendChild(label);
+        menu.appendChild(div);
+      });
+    }
+
+    function toggleFilter(filterType) {
+      const menu = document.getElementById(filterType + '-filter');
+      const allMenus = document.querySelectorAll('.filter-menu');
+      allMenus.forEach(m => {
+        if (m !== menu) m.classList.remove('show');
+      });
+      menu.classList.toggle('show');
+    }
+
+    function updateFilter(filterType, value, isChecked) {
+      if (isChecked) {
+        if (!state.activeFilters[filterType].includes(value)) {
+          state.activeFilters[filterType].push(value);
+        }
+      } else {
+        state.activeFilters[filterType] = state.activeFilters[filterType].filter(v => v !== value);
+      }
+      updateActiveFiltersDisplay();
+      applyFilters();
+    }
+
+    function updateActiveFiltersDisplay() {
+      const container = document.getElementById('active-filters');
+      container.innerHTML = '';
+      Object.entries(state.activeFilters).forEach(([type, values]) => {
+        values.forEach(value => {
+          const tag = document.createElement('div');
+          tag.className = 'filter-tag';
+          tag.innerHTML = value + '<span class="remove">×</span>';
+          tag.querySelector('.remove').addEventListener('click', function () {
+            removeFilter(type, value);
+          });
+          container.appendChild(tag);
+        });
+      });
+    }
+
+    function removeFilter(filterType, value) {
+      state.activeFilters[filterType] = state.activeFilters[filterType].filter(v => v !== value);
+      const checkbox = document.getElementById(filterType + '-' + value);
+      if (checkbox) checkbox.checked = false;
+      updateActiveFiltersDisplay();
+      applyFilters();
+    }
+
+    function applyFilters() {
+      const cards = document.querySelectorAll('#programs-grid .card');
+      cards.forEach(card => {
+        const index = parseInt(card.dataset.index);
+        const data = state.companiesData[index];
+        if (!data) return;
+        let show = true;
+        if (state.activeFilters.modality.length > 0) {
+          show = show && state.activeFilters.modality.includes(data.program_overview.modality?.type);
+        }
+        if (state.activeFilters.target.length > 0) {
+          show = show && state.activeFilters.target.includes(data.program_overview.target?.primary_target);
+        }
+        if (state.activeFilters.type.length > 0) {
+          show = show && state.activeFilters.type.includes(data.program_overview.program_type);
+        }
+        card.style.display = show ? 'block' : 'none';
+      });
+    }
+
+    function filterCards(gridId, searchTerm) {
+      const cards = document.querySelectorAll('#' + gridId + ' .card');
+      const term = searchTerm.toLowerCase();
+      cards.forEach(card => {
+        const text = card.textContent.toLowerCase();
+        card.style.display = text.includes(term) ? 'block' : 'none';
+      });
+    }
+
+    // Comparison logic
+    function organizeComparisonGroups() {
+      state.comparisonGroups = { modality: {}, target: {}, stage: {} };
+      state.companiesData.forEach((data, index) => {
+        const modality = data.program_overview.modality?.type || 'Unknown';
+        if (!state.comparisonGroups.modality[modality]) state.comparisonGroups.modality[modality] = [];
+        state.comparisonGroups.modality[modality].push(index);
+        const targetClass = data.program_overview.target?.target_class || 'Unknown';
+        if (!state.comparisonGroups.target[targetClass]) state.comparisonGroups.target[targetClass] = [];
+        state.comparisonGroups.target[targetClass].push(index);
+        const stage = data.development_status?.current_stage || 'Unknown';
+        if (!state.comparisonGroups.stage[stage]) state.comparisonGroups.stage[stage] = [];
+        state.comparisonGroups.stage[stage].push(index);
+      });
+    }
+
+    function initCompareView() {
+      document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.addEventListener('click', function () {
+          document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+          this.classList.add('active');
+          state.compareMode = this.dataset.mode;
+          state.selectedItems.clear();
+          updateComparisonOptions();
+        });
+      });
+      updateComparisonOptions();
+    }
+
+    function updateComparisonOptions() {
+      const container = document.getElementById('comparison-options');
+      container.innerHTML = '';
+      switch (state.compareMode) {
+        case 'company':
+          renderCompanyOptions(container);
+          break;
+        case 'modality':
+          renderGroupOptions(container, 'modality', 'Modality Types');
+          break;
+        case 'target':
+          renderGroupOptions(container, 'target', 'Target Classes');
+          break;
+        case 'stage':
+          renderGroupOptions(container, 'stage', 'Development Stages');
+          break;
+        case 'combined':
+          renderCombinedOptions(container);
+          break;
+      }
+      updateComparisonView();
+    }
+
+    function renderCompanyOptions(container) {
+      const group = document.createElement('div');
+      group.className = 'option-group';
+      const title = document.createElement('h4');
+      title.textContent = 'Select Companies';
+      group.appendChild(title);
+      state.companiesData.forEach((data, index) => {
+        const item = createOptionItem(
+          'company-' + index,
+          data.company_information.company_name || '',
+          data.program_overview.program_name || '',
+          () => toggleSelection(index)
+        );
+        group.appendChild(item);
+      });
+      container.appendChild(group);
+    }
+
+    function renderGroupOptions(container, groupType, title) {
+      const group = document.createElement('div');
+      group.className = 'option-group';
+      const groupTitle = document.createElement('h4');
+      groupTitle.textContent = title;
+      group.appendChild(groupTitle);
+      Object.entries(state.comparisonGroups[groupType]).forEach(([key, indices]) => {
+        const item = createOptionItem(
+          groupType + '-' + key,
+          key,
+          indices.length + ' programs',
+          () => toggleGroupSelection(groupType, key)
+        );
+        group.appendChild(item);
+      });
+      container.appendChild(group);
+    }
+
+    function renderCombinedOptions(container) {
+      renderGroupOptions(container, 'modality', 'By Modality Type');
+      renderGroupOptions(container, 'target', 'By Target Class');
+      renderGroupOptions(container, 'stage', 'By Development Stage');
+    }
+
+    function createOptionItem(id, primary, secondary, onChange) {
+      const item = document.createElement('div');
+      item.className = 'option-item';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.id = id;
+      checkbox.addEventListener('change', onChange);
+      const label = document.createElement('label');
+      label.htmlFor = id;
+      label.innerHTML = '<strong>' + primary + '</strong> <span class="option-count">(' + secondary + ')</span>';
+      item.appendChild(checkbox);
+      item.appendChild(label);
+      return item;
+    }
+
+    function toggleSelection(index) {
+      if (state.selectedItems.has(index)) state.selectedItems.delete(index);
+      else state.selectedItems.add(index);
+      updateComparisonView();
+    }
+
+    function toggleGroupSelection(groupType, key) {
+      const groupKey = groupType + ':' + key;
+      if (state.selectedItems.has(groupKey)) state.selectedItems.delete(groupKey);
+      else state.selectedItems.add(groupKey);
+      updateComparisonView();
+    }
+
+    function updateComparisonView() {
+      const container = document.getElementById('compare-container');
+      if (state.selectedItems.size === 0) {
+        container.innerHTML = '<div class="compare-empty">Select items to compare</div>';
+        return;
+      }
+      container.innerHTML = '';
+      if (state.compareMode === 'company') {
+        Array.from(state.selectedItems).forEach(index => {
+          const data = state.companiesData[index];
+          const card = createComparisonCard(data);
+          container.appendChild(card);
+        });
+      } else {
+        Array.from(state.selectedItems).forEach(groupKey => {
+          const [groupType, key] = groupKey.split(':');
+          const card = createGroupComparisonCard(groupType, key);
+          container.appendChild(card);
+        });
+      }
+    }
+
+    function createGroupComparisonCard(groupType, key) {
+      const card = document.createElement('div');
+      card.className = 'compare-card selected';
+      const indices = state.comparisonGroups[groupType][key] || [];
+      const programs = indices.map(i => state.companiesData[i]);
+      const totalTrials = programs.reduce((sum, p) => sum + (p.clinical_trials?.total_trials || 0), 0);
+      const activeTrials = programs.reduce((sum, p) => sum + (p.clinical_trials?.active_trials || 0), 0);
+      const totalPartnerships = programs.reduce((sum, p) => sum + (p.partnerships_collaborations?.total_partnerships || 0), 0);
+      const companies = [...new Set(programs.map(p => p.company_information.company_name))];
+      const stages = [...new Set(programs.map(p => p.development_status?.current_stage || 'Unknown'))];
+
+      const sections = [];
+
+      sections.push(createCompareSection(
+        groupType.charAt(0).toUpperCase() + groupType.slice(1) + ': ' + key,
+        [
+          { label: 'Total Programs', value: programs.length },
+          { label: 'Companies', value: companies.length },
+          { label: 'Development Stages', value: stages.join(', ') }
+        ]
+      ));
+
+      sections.push(createCompareSection('Clinical Progress', [
+        { label: 'Total Trials', value: totalTrials },
+        { label: 'Active Trials', value: activeTrials },
+        { label: 'Avg Trials/Program', value: (programs.length ? (totalTrials / programs.length).toFixed(1) : '0') }
+      ]));
+
+      sections.push(createCompareSection('Partnerships', [
+        { label: 'Total Partnerships', value: totalPartnerships },
+        { label: 'Avg/Program', value: (programs.length ? (totalPartnerships / programs.length).toFixed(1) : '0') }
+      ]));
+
+      const programsList = programs.map(p => ({
+        label: p.program_overview.program_name || '',
+        value: p.company_information.company_name || ''
+      }));
+      sections.push(createCompareSection('Programs', programsList));
+
+      card.innerHTML = '<h3>' + key + '</h3>' + sections.join('');
+      return card;
+    }
+
+    function createComparisonCard(data) {
+      const card = document.createElement('div');
+      card.className = 'compare-card selected';
+      const sections = [];
+
+      sections.push(createCompareSection('Company Overview', [
+        { label: 'Type', value: data.company_information.company_type || 'N/A' },
+        { label: 'Founded', value: data.company_information.founded_year || 'N/A' },
+        { label: 'Employees', value: data.company_information.employee_count || 'N/A' },
+        { label: 'Location', value: data.company_information.headquarters?.country || 'N/A' }
+      ]));
+
+      sections.push(createCompareSection('Program: ' + (data.program_overview.program_name || ''), [
+        { label: 'Type', value: data.program_overview.program_type || 'N/A' },
+        { label: 'Modality', value: data.program_overview.modality?.type || 'N/A' },
+        { label: 'Target', value: data.program_overview.target?.primary_target || 'N/A' },
+        { label: 'Target Class', value: data.program_overview.target?.target_class || 'N/A' },
+        { label: 'Current Stage', value: data.development_status?.current_stage || 'N/A' }
+      ]));
+
+      sections.push(createCompareSection('Clinical Progress', [
+        { label: 'Total Trials', value: data.clinical_trials?.total_trials || 0 },
+        { label: 'Active Trials', value: data.clinical_trials?.active_trials || 0 },
+        { label: 'Completed Trials', value: data.clinical_trials?.completed_trials || 0 }
+      ]));
+
+      if (data.clinical_data?.key_efficacy_results) {
+        const results = data.clinical_data.key_efficacy_results.map(result => ({
+          label: result.metric || '',
+          value: result.result || ''
+        }));
+        sections.push(createCompareSection('Key Results', results));
+      }
+
+      card.innerHTML = '<h3>' + (data.company_information.company_name || '') + '</h3>' + sections.join('');
+      return card;
+    }
+
+    function createCompareSection(title, metrics) {
+      let html = '<div class="compare-section">';
+      html += '<h4>' + title + '</h4>';
+      metrics.forEach(metric => {
+        html += '<div class="compare-metric">';
+        html += '<span class="label">' + metric.label + '</span>';
+        html += '<span class="value">' + metric.value + '</span>';
+        html += '</div>';
+      });
+      html += '</div>';
+      return html;
+    }
+
+    // Company Detail
+    function showCompanyDetail(data) {
+      document.getElementById('main-header').style.display = 'none';
+      document.getElementById('detail-header').style.display = 'block';
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.getElementById('company-detail').classList.add('active');
+      const content = document.getElementById('company-detail-content');
+      content.innerHTML = createCompanyDetailHTML(data);
+      window.scrollTo(0, 0);
+    }
+
+    function backToOverview() {
+      document.getElementById('main-header').style.display = 'block';
+      document.getElementById('detail-header').style.display = 'none';
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.getElementById('overview').classList.add('active');
+      document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+      document.querySelector('[data-view="overview"]').classList.add('active');
+    }
+
+    function createCompanyDetailHTML(data) {
+      const company = data.company_information || {};
+      const program = data.program_overview || {};
+      const development = data.development_status || {};
+      const trials = data.clinical_trials || {};
+      const partnerships = data.partnerships_collaborations || {};
+      const clinical = data.clinical_data || {};
+      const metadata = data.metadata || {};
+      const research = data.research_notes || {};
+      const publications = data.scientific_publications || {};
+      const dataSources = data.data_sources || {};
+      const competitive = data.competitive_landscape || {};
+      const manufacturing = data.manufacturing_supply || {};
+      const ip = data.intellectual_property || {};
+
+      // Header summary
+      let html = '<div class="company-detail-header">' +
+        '<h2>' + (company.company_name || '') + '</h2>' +
+        '<p style="font-size: 1.1rem; color: #888; margin-bottom: 1rem;">' + (company.company_focus || '') + '</p>' +
+        '<div class="company-meta">';
+      if (company.ticker_symbol) {
+        html += '<div class="company-meta-item"><span class="badge">' + company.ticker_symbol + '</span></div>';
+      }
+      if (company.market_cap_usd) {
+        html += '<div class="company-meta-item">💰 Market Cap: ' + Number(company.market_cap_usd).toLocaleString() + '</div>';
+      }
+      html += '<div class="company-meta-item">📍 ' + (company.headquarters?.city || '') +
+        (company.headquarters?.state_province ? ', ' + company.headquarters.state_province : '') +
+        ', ' + (company.headquarters?.country || '') + '</div>' +
+        '<div class="company-meta-item">👥 ' + (company.employee_count || 'N/A') + ' employees</div>' +
+        '<div class="company-meta-item">📅 Founded ' + (company.founded_year || 'N/A') + '</div>' +
+        '<div class="company-meta-item">🏢 ' + (company.company_type || '') + '</div>';
+      if (metadata.data_quality_score) {
+        html += '<div class="company-meta-item">' +
+          '<span class="data-quality-indicator data-quality-' + metadata.data_quality_score.toLowerCase() + '">' +
+          'Data Quality: ' + metadata.data_quality_score +
+          '</span></div>';
+      }
+      html += '</div></div>';
+
+      // Program Overview
+      html += '<div class="detail-grid">';
+      html += '<div class="detail-section"><h3>📋 Program Overview</h3>' +
+        '<ul class="detail-list">' +
+        '<li><span class="detail-label">Program Name</span>' +
+        '<span class="detail-value">' + (program.program_name || '') + '</span></li>';
+      if (program.alternative_names?.length) {
+        html += '<li><span class="detail-label">Alternative Names</span>' +
+          '<span class="detail-value">' + program.alternative_names.join(', ') + '</span></li>';
+      }
+      html += '<li><span class="detail-label">Program Type</span>' +
+        '<span class="detail-value">' + (program.program_type || '') + '</span></li>' +
+        '<li><span class="detail-label">Modality</span>' +
+        '<span class="detail-value">' + (program.modality?.type || 'N/A') + '</span></li>';
+      if (program.modality?.subtype) {
+        html += '<li><span class="detail-label">Subtype</span>' +
+          '<span class="detail-value">' + program.modality.subtype + '</span></li>';
+      }
+      if (program.modality?.platform_technology) {
+        html += '<li><span class="detail-label">Platform Technology</span>' +
+          '<span class="detail-value">' + program.modality.platform_technology + '</span></li>';
+      }
+      html += '<li><span class="detail-label">Primary Target</span>' +
+        '<span class="detail-value">' + (program.target?.primary_target || 'N/A') + '</span></li>' +
+        '<li><span class="detail-label">Target Class</span>' +
+        '<span class="detail-value">' + (program.target?.target_class || 'N/A') + '</span></li>';
+      if (program.target?.pathway) {
+        html += '<li><span class="detail-label">Pathway</span>' +
+          '<span class="detail-value">' + program.target.pathway + '</span></li>';
+      }
+      if (program.target?.biological_rationale) {
+        html += '<li><span class="detail-label">Biological Rationale</span>' +
+          '<span class="detail-value">' + program.target.biological_rationale + '</span></li>';
+      }
+      html += '</ul></div>';
+
+      // Mechanism of Action
+      if (program.mechanism_of_action) {
+        html += '<div class="detail-section"><h3>⚡ Mechanism of Action</h3>' +
+          '<ul class="detail-list">';
+        if (program.mechanism_of_action.summary) {
+          html += '<li><span class="detail-label">Summary</span>' +
+            '<span class="detail-value">' + program.mechanism_of_action.summary + '</span></li>';
+        }
+        if (program.mechanism_of_action.detailed_description) {
+          html += '<li><span class="detail-label">Detailed Description</span>' +
+            '<span class="detail-value">' + program.mechanism_of_action.detailed_description + '</span></li>';
+        }
+        if (program.mechanism_of_action.key_differentiators?.length) {
+          html += '<li><span class="detail-label">Key Differentiators</span>' +
+            '<span class="detail-value"><ul style="margin: 0.5rem 0; padding-left: 1.5rem;">';
+          program.mechanism_of_action.key_differentiators.forEach(diff => {
+            html += '<li>' + diff + '</li>';
+          });
+          html += '</ul></span></li>';
+        }
+        html += '</ul></div>';
+      }
+
+      // Leadership & Funding (simplified)
+      html += '<div class="detail-section"><h3>💼 Leadership & Funding</h3>' +
+        '<ul class="detail-list">';
+      if (company.leadership) {
+        if (company.leadership.ceo) {
+          html += '<li><span class="detail-label">CEO</span>' +
+            '<span class="detail-value">' + company.leadership.ceo + '</span></li>';
+        }
+        if (company.leadership.cso) {
+          html += '<li><span class="detail-label">CSO</span>' +
+            '<span class="detail-value">' + company.leadership.cso + '</span></li>';
+        }
+        if (company.leadership.cmo && company.leadership.cmo !== 'UNAVAILABLE') {
+          html += '<li><span class="detail-label">CMO</span>' +
+            '<span class="detail-value">' + company.leadership.cmo + '</span></li>';
+        }
+      }
+      if (company.total_funding_usd) {
+        html += '<li><span class="detail-label">Total Funding</span>' +
+          '<span class="detail-value">' + Number(company.total_funding_usd).toLocaleString() + '</span></li>';
+      }
+      if (company.last_funding_round) {
+        const round = company.last_funding_round;
+        html += '<li><span class="detail-label">Last Funding Round</span>' +
+          '<span class="detail-value">' + (round.round_type || '') +
+          ' (' + (round.amount_usd ? Number(round.amount_usd).toLocaleString() : '') +
+          ', ' + (round.date || '') + ')</span></li>';
+      }
+      if (company.key_investors?.length) {
+        html += '<li><span class="detail-label">Key Investors</span>' +
+          '<span class="detail-value">' + company.key_investors.join(', ') + '</span></li>';
+      }
+      html += '</ul></div>';
+
+      // Development Status
+      html += '<div class="detail-section"><h3>🚀 Development Status</h3>' +
+        '<ul class="detail-list">' +
+        '<li><span class="detail-label">Current Stage</span>' +
+        '<span class="detail-value"><span class="badge phase">' + (development.current_stage || 'N/A') + '</span></span></li>';
+      if (development.stage_details) {
+        html += '<li><span class="detail-label">Stage Details</span>' +
+          '<span class="detail-value">' + development.stage_details + '</span></li>';
+      }
+      if (development.regulatory_designations?.length) {
+        html += '<li><span class="detail-label">Regulatory Designations</span>' +
+          '<span class="detail-value">';
+        development.regulatory_designations.forEach(d => {
+          if (d.designation && d.designation !== 'UNAVAILABLE') {
+            html += '<span class="badge warning">' + d.designation + '</span> ';
+          }
+        });
+        html += '</span></li>';
+      }
+      if (development.next_milestones?.length) {
+        html += '<li><span class="detail-label">Next Milestones</span>' +
+          '<span class="detail-value">';
+        development.next_milestones.forEach(milestone => {
+          html += '<div style="margin-bottom: 0.5rem;">' +
+            '<strong>' + (milestone.milestone || '') + '</strong> (' + (milestone.expected_date || '') + ')' +
+            (milestone.description ? '<br><span style="color: #888; font-size: 0.9rem;">' + milestone.description + '</span>' : '') +
+            '</div>';
+        });
+        html += '</span></li>';
+      }
+      html += '</ul></div>';
+
+      // Clinical Trials
+      html += '<div class="detail-section"><h3>🧪 Clinical Trials</h3>' +
+        '<ul class="detail-list">' +
+        '<li><span class="detail-label">Total Trials</span>' +
+        '<span class="detail-value">' + (trials.total_trials || 0) + '</span></li>' +
+        '<li><span class="detail-label">Active Trials</span>' +
+        '<span class="detail-value">' + (trials.active_trials || 0) + '</span></li>' +
+        '<li><span class="detail-label">Completed Trials</span>' +
+        '<span class="detail-value">' + (trials.completed_trials || 0) + '</span></li>' +
+        '</ul>';
+      if (trials.trials?.length) {
+        html += '<h4 style="margin-top: 1.5rem; margin-bottom: 1rem; color: #34d399;">Trial Details</h4>';
+        trials.trials.forEach(trial => {
+          html += '<div class="trial-card-mini">' +
+            '<h4>' + (trial.title || '') + '</h4>' +
+            '<div style="margin-bottom: 0.5rem;">' +
+            '<span class="badge phase">' + (trial.phase || '') + '</span>' +
+            '<span class="badge">' + (trial.status || '') + '</span></div>' +
+            '<div style="font-size: 0.9rem; color: #888;">' +
+            '<div><strong>ID:</strong> ' + (trial.trial_id || 'N/A') + '</div>' +
+            '<div><strong>Start Date:</strong> ' + (trial.start_date || 'N/A') + '</div>' +
+            '<div><strong>Primary Completion:</strong> ' + (trial.primary_completion_date || 'N/A') + '</div>' +
+            '<div><strong>Enrollment:</strong> ' + ((trial.enrollment?.actual || 0) + '/' + (trial.enrollment?.target || 0)) + '</div>';
+          if (trial.primary_endpoints?.length) {
+            html += '<div><strong>Primary Endpoints:</strong> ' + trial.primary_endpoints.join(', ') + '</div>';
+          }
+          if (trial.dosing_regimen) {
+            html += '<div><strong>Dosing:</strong> ' + trial.dosing_regimen + '</div>';
+          }
+          html += '</div></div>';
+        });
+      }
+      html += '</div>';
+
+      // Partnerships
+      html += '<div class="detail-section"><h3>🤝 Partnerships & Collaborations</h3>' +
+        '<ul class="detail-list">' +
+        '<li><span class="detail-label">Total Partnerships</span>' +
+        '<span class="detail-value">' + (partnerships.total_partnerships || 0) + '</span></li>' +
+        '</ul>';
+      if (partnerships.partnerships?.length) {
+        html += '<h4 style="margin-top: 1.5rem; margin-bottom: 1rem; color: #764ba2;">Partnership Details</h4>';
+        partnerships.partnerships.forEach(p => {
+          html += '<div class="partnership-item">' +
+            '<h4>' + (p.partner || '') + '</h4>' +
+            '<div style="font-size: 0.9rem;">' +
+            '<div><strong>Type:</strong> ' + (p.type || '') + '</div>';
+          if (p.announcement_date) {
+            html += '<div><strong>Announced:</strong> ' + p.announcement_date + '</div>';
+          }
+          if (p.scope) {
+            html += '<div><strong>Scope:</strong> ' + p.scope + '</div>';
+          }
+          if (p.territories?.length) {
+            html += '<div><strong>Territories:</strong> ' + p.territories.join(', ') + '</div>';
+          }
+          if (p.deal_value) {
+            html += '<div><strong>Deal Value:</strong> ';
+            if (p.deal_value.upfront_usd > 0) {
+              html += 'Upfront: ' + Number(p.deal_value.upfront_usd).toLocaleString() + ' ';
+            }
+            if (p.deal_value.total_potential_usd > 0) {
+              html += 'Total Potential: ' + Number(p.deal_value.total_potential_usd).toLocaleString();
+            }
+            html += '</div>';
+          }
+          html += '</div></div>';
+        });
+      }
+      html += '</div></div>'; // Close detail-grid
+
+      // Additional sections (left as-is for brevity; you can expand similarly)
+
+      return html;
+    }
+
+    // Close filter menus when clicking outside
+    document.addEventListener('click', function (event) {
+      if (!event.target.closest('.filter-dropdown')) {
+        document.querySelectorAll('.filter-menu').forEach(menu => {
+          menu.classList.remove('show');
+        });
+      }
+    });
+  </script>
+</body>
+</html>
