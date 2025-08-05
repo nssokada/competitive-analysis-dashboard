@@ -581,7 +581,7 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
                     st.info("No trials found")
 
 
-elif st.session_state.current_page == 'Network Analysis' and st.session_state.data:
+elif st.session_state.current_page == 'Cluster Analysis' and st.session_state.data:
     data = st.session_state.data
     programs_df = pd.DataFrame(data.get('programs', []))
     companies_df = pd.DataFrame(data.get('companies', []))
@@ -876,6 +876,8 @@ elif st.session_state.current_page == 'Network Analysis' and st.session_state.da
                 st.warning("Insufficient data for network visualization")
         else:
             st.info("Select an indication or target to analyze the competitive landscape")
+
+
 else:
     if st.session_state.current_page != 'Overview':
         st.warning("Please upload a dataset from the Overview page")
