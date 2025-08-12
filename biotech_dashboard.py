@@ -702,29 +702,151 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
     # ————————————————
     # Tab 1: Cross‐Dimensional Matrix
     with tab1:
-        st.markdown("### Cross-Dimensional Analysis")
-        col1, col2 = st.columns(2)
-        dimensions = [
-            'indication_group', 'target_family_final',
-            'program_classification_final', 'modality_final',
-            'development_stage_final'
-        ]
-        with col1:
-            x_dim = st.selectbox("X-axis", dimensions)
-        with col2:
-            y_dim = st.selectbox("Y-axis", dimensions)
+        st.markdown("### Portfolio Distribution")
 
-        if st.button("Generate Analysis"):
-            cross_tab = pd.crosstab(programs_df[y_dim], programs_df[x_dim])
-            fig = px.imshow(
-                cross_tab,
-                labels=dict(x=x_dim, y=y_dim, color="Count"),
-                title="Portfolio Distribution Matrix",
-                aspect="auto",
-                color_continuous_scale="Blues"
+        view = st.radio(
+            "View",
+            ["Company × Phase", "Cross-Dimensional Matrix (original)"],
+            horizontal=True
+        )
+
+        # ---------- VIEW A: Company × Phase (Programs/Trials) ----------
+        if view == "Company × Phase":
+            src = st.radio("Analyze:", ["Programs"], horizontal=True)
+            normalize = st.checkbox("Show as percentage within company", value=False)
+            min_items = st.number_input("Min items per company (filter small players)", min_value=0, value=0, step=1)
+
+            def _pick(df, name, prefs):
+                for p in prefs:
+                    if p in df.columns:
+                        return p
+                raise KeyError(f"Missing required column for {name}: tried {prefs}")
+
+            # choose data source
+            if src == "Trials" and 'trials_df' in locals() and isinstance(trials_df, pd.DataFrame) and not trials_df.empty:
+                df = trials_df.copy()
+                company_col = _pick(df, "company", ["company_name", "sponsor", "Sponsor"])
+                phase_col   = _pick(df, "phase",   ["phase", "clinical_phase", "development_stage_final"])
+                title_unit  = "trials"
+            else:
+                df = programs_df.copy()
+                company_col = _pick(df, "company", ["company_name"])
+                phase_col   = _pick(df, "phase",   ["development_stage_final"])
+                title_unit  = "programs"
+
+            # clean
+            df = df[[company_col, phase_col]].copy()
+            df[company_col] = df[company_col].astype(str).str.strip()
+            df[phase_col]   = df[phase_col].astype(str).str.strip()
+
+            phase_order = ["Discovery", "Preclinical", "Phase 1", "Phase 2", "Phase 3", "Filed", "Approved"]
+
+            # aggregate
+            agg = (
+                df.groupby([company_col, phase_col], dropna=False)
+                .size()
+                .reset_index(name="count")
             )
-            fig.update_layout(**plotly_layout, height=600)
-            st.plotly_chart(fig, use_container_width=True)
+            if agg.empty:
+                st.warning("No data to visualize.")
+                st.stop()
+
+            totals = agg.groupby(company_col, as_index=False)['count'].sum().sort_values('count', ascending=False)
+            if min_items > 0:
+                keep = totals[totals['count'] >= min_items][company_col]
+                agg  = agg[agg[company_col].isin(keep)]
+                totals = totals[totals[company_col].isin(keep)]
+
+            if totals.empty:
+                st.info("All companies filtered out by the minimum threshold.")
+                st.stop()
+
+            top_default = min(10, len(totals))
+            top_n = st.slider("Show top N companies by total volume", 3, min(50, len(totals)), top_default)
+            top_companies = totals.head(top_n)[company_col].tolist()
+            agg = agg[agg[company_col].isin(top_companies)]
+
+            # order categories
+            agg[company_col] = pd.Categorical(agg[company_col], categories=top_companies, ordered=True)
+            phase_cats = [p for p in phase_order if p in agg[phase_col].unique().tolist()]
+            if phase_cats:
+                agg[phase_col] = pd.Categorical(
+                    agg[phase_col],
+                    categories=phase_cats + [p for p in agg[phase_col].unique() if p not in phase_cats],
+                    ordered=True
+                )
+
+            # normalize option
+            value_col, y_label = ("count", "Count")
+            if normalize:
+                agg["percent"] = agg["count"] / agg.groupby(company_col)["count"].transform("sum") * 100
+                value_col, y_label = ("percent", "Share (%)")
+
+            # stacked bar
+            fig_bar = px.bar(
+                agg,
+                x=company_col, y=value_col, color=phase_col,
+                labels={company_col: "Company", value_col: y_label, phase_col: "Phase"},
+                title=f"{title_unit.capitalize()} by Phase per Company"
+            )
+            fig_bar.update_layout(**plotly_layout, barmode="stack", xaxis_title=None, legend_title="Phase", height=480)
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+            # heatmap (use Option 1 margin fix)
+            pivot = agg.pivot_table(index=company_col, columns=phase_col, values=value_col, fill_value=0)
+            pivot = pivot.reindex(index=top_companies)
+            if phase_cats:
+                pivot = pivot.reindex(columns=phase_cats + [c for c in pivot.columns if c not in phase_cats])
+
+            fig_heat = px.imshow(
+                pivot,
+                labels=dict(x="Phase", y="Company", color=y_label),
+                title=f"{title_unit.capitalize()} by Phase per Company (Heatmap)",
+                aspect="auto"
+            )
+            # remove conflicting key
+            layout_no_margin = {k: v for k, v in plotly_layout.items() if k != 'margin'}
+            fig_heat.update_layout(
+                **layout_no_margin,
+                height=520,
+                margin=dict(l=60, r=40, t=60, b=40)
+            )
+            st.plotly_chart(fig_heat, use_container_width=True)
+
+            with st.expander("Show aggregated table"):
+                st.dataframe(
+                    agg.sort_values([company_col, phase_col]).rename(
+                        columns={company_col: "Company", phase_col: "Phase", value_col: y_label}
+                    ),
+                    use_container_width=True
+                )
+
+        # ---------- VIEW B: Your original Cross-Dimensional Matrix ----------
+        else:
+            st.markdown("### Cross-Dimensional Analysis")
+            col1, col2 = st.columns(2)
+            dimensions = [
+                'indication_group', 'target_family_final',
+                'program_classification_final', 'modality_final',
+                'development_stage_final'
+            ]
+            with col1:
+                x_dim = st.selectbox("X-axis", dimensions, key="x_dim_matrix")
+            with col2:
+                y_dim = st.selectbox("Y-axis", dimensions, key="y_dim_matrix")
+
+            if st.button("Generate Analysis", key="gen_matrix"):
+                cross_tab = pd.crosstab(programs_df[y_dim], programs_df[x_dim])
+                fig = px.imshow(
+                    cross_tab,
+                    labels=dict(x=x_dim, y=y_dim, color="Count"),
+                    title="Portfolio Distribution Matrix",
+                    aspect="auto",
+                    color_continuous_scale="Blues"
+                )
+                fig.update_layout(**plotly_layout, height=600)
+                st.plotly_chart(fig, use_container_width=True)
+
 
     # ————————————————
     # Tab 2: Direct Company Comparison (with full Program expanders + Trial lists)
