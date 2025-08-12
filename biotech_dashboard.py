@@ -9,6 +9,8 @@ from datetime import datetime
 import networkx as nx
 from itertools import combinations
 import ast
+import re
+
 
 # Page config
 st.set_page_config(
@@ -52,6 +54,45 @@ def format_currency(value):
     if pd.isna(value) or value == 0:
         return "Undisclosed"
     return f"${value/1e6:.1f}M"
+
+def parse_nct_ids(raw):
+    """Return a de-duplicated, order‐preserving list of NCT IDs from messy inputs."""
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return []
+    ids = []
+
+    # If it's already a list/tuple
+    if isinstance(raw, (list, tuple)):
+        candidates = [str(x) for x in raw]
+    else:
+        s = str(raw).strip()
+        # If it's a string that looks like a Python list, try to parse
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                parsed = ast.literal_eval(s)
+                if isinstance(parsed, (list, tuple)):
+                    candidates = [str(x) for x in parsed]
+                else:
+                    candidates = [s]
+            except Exception:
+                candidates = [s]
+        else:
+            candidates = [s]
+
+    # From all candidates, extract NCT IDs by regex
+    for c in candidates:
+        for m in re.findall(r"NCT\d{8}", c):
+            if m not in ids:
+                ids.append(m)
+    return ids
+
+def trial_links(raw):
+    """Markdown links to ClinicalTrials.gov for one or more NCT IDs."""
+    ids = parse_nct_ids(raw)
+    if not ids:
+        return "N/A"
+    return " • ".join(f"[{tid}](https://clinicaltrials.gov/study/{tid})" for tid in ids)
+
 
 
 def safe_get(dict_obj, key, default="N/A"):
@@ -108,7 +149,7 @@ with st.sidebar:
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     
     # Navigation menu
-    pages = ['Overview', 'Programs', 'Clinical Trials', 'Compare', 'Cluster Analysis']
+    pages = ['Overview', 'Programs', 'Companies', 'Clinical Trials', 'Compare', 'Cluster Analysis']
     selected_page = st.radio("Navigation", pages, key='nav_radio')
     st.session_state.current_page = selected_page
     
@@ -160,89 +201,176 @@ plotly_layout = dict(
 # Main content area
 if st.session_state.current_page == 'Overview':
     st.title("Overview")
-    
-    # File upload section
+
+    # File upload
     st.markdown("### Data Import")
     uploaded_file = st.file_uploader(
-        "Select JSON dataset", 
+        "Select JSON dataset",
         type=['json', 'txt'],
         help="Upload competitive intelligence dataset in JSON format"
     )
-    
+
     if uploaded_file is not None:
         st.session_state.data = load_data(uploaded_file)
         st.success("Data loaded successfully")
-    
-    if st.session_state.data:
-        data = st.session_state.data
-        
-        # Display high-level statistics
-        st.markdown("### Key Metrics")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Total Companies", len(data.get('companies', [])))
-        
-        with col2:
-            st.metric("Active Programs", len(data.get('programs', [])))
-        
-        with col3:
-            st.metric("Clinical Trials", len(data.get('trials', [])))
-        
-        with col4:
-            st.metric("Partnerships", len(data.get('partnerships', [])))
-        
-        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-        
-        # Programs by indication
-        st.markdown("### Therapeutic Area Distribution")
-        programs_df = pd.DataFrame(data.get('programs', []))
-        if not programs_df.empty:
-            indication_counts = programs_df['indication_group'].value_counts().head(10)
+
+    if not st.session_state.data:
+        st.info("Please upload a dataset to begin analysis")
+        st.stop()
+
+    # --- Base DataFrames ---
+    data = st.session_state.data
+    programs_df   = pd.DataFrame(data.get('programs', []))
+    companies_df  = pd.DataFrame(data.get('companies', []))
+    trials_df     = pd.DataFrame(data.get('trials', []))
+    partnerships  = pd.DataFrame(data.get('partnerships', []))
+
+    if programs_df.empty:
+        st.warning("No program data found.")
+        st.stop()
+
+    # --- Filters (shown before plots) ---
+    st.markdown("### Filters")
+    f1, f2, f3, f4 = st.columns(4)
+
+    # Safely get unique options
+    def uniq(series):
+        if series.name not in programs_df.columns:
+            return []
+        return sorted([x for x in series.dropna().unique() if str(x).strip() != ""])
+
+    with f1:
+        sel_indications = st.multiselect(
+            "Indication",
+            options=uniq(programs_df['indication_group']) if 'indication_group' in programs_df else [],
+            default=[],
+            help="Leave empty to include all"
+        )
+    with f2:
+        sel_targets = st.multiselect(
+            "Target Family",
+            options=uniq(programs_df['target_family_final']) if 'target_family_final' in programs_df else [],
+            default=[],
+        )
+    with f3:
+        sel_class = st.multiselect(
+            "Classification",
+            options=uniq(programs_df['program_classification_final']) if 'program_classification_final' in programs_df else [],
+            default=[],
+        )
+    with f4:
+        sel_modality = st.multiselect(
+            "Modality",
+            options=uniq(programs_df['modality_final']) if 'modality_final' in programs_df else [],
+            default=[],
+        )
+
+    # --- Apply filters ---
+    fdf = programs_df.copy()
+
+    if sel_indications:
+        fdf = fdf[fdf['indication_group'].isin(sel_indications)]
+    if sel_targets:
+        fdf = fdf[fdf['target_family_final'].isin(sel_targets)]
+    if sel_class:
+        fdf = fdf[fdf['program_classification_final'].isin(sel_class)]
+    if sel_modality:
+        fdf = fdf[fdf['modality_final'].isin(sel_modality)]
+
+    # --- Derived sets for metrics ---
+    filtered_company_names = set(fdf['company_name'].dropna().unique())
+    filtered_program_ids   = set(fdf['program_id'].dropna().unique()) if 'program_id' in fdf else set()
+
+    trials_f = pd.DataFrame()
+    if not trials_df.empty and 'program_id' in trials_df.columns and filtered_program_ids:
+        trials_f = trials_df[trials_df['program_id'].isin(filtered_program_ids)]
+
+    partnerships_f = pd.DataFrame()
+    if not partnerships.empty:
+        # Count partnerships where at least one company is in the filtered set
+        col_candidates = [c for c in partnerships.columns if 'company' in c.lower() or 'partner' in c.lower()]
+        if col_candidates:
+            mask = False
+            for c in col_candidates:
+                mask = mask | partnerships[c].isin(filtered_company_names)
+            partnerships_f = partnerships[mask]
+
+    # --- Key Metrics (filtered) ---
+    st.markdown("### Key Metrics")
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.metric("Total Companies", len(filtered_company_names))
+    with m2:
+        st.metric("Active Programs", len(fdf))
+    with m3:
+        st.metric("Clinical Trials", len(trials_f))
+    with m4:
+        st.metric("Partnerships", len(partnerships_f))
+
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    # --- Overview Plots (filtered) ---
+    # Therapeutic Area Distribution
+    st.markdown("### Therapeutic Area Distribution")
+    if 'indication_group' in fdf.columns and not fdf.empty:
+        ind_counts = fdf['indication_group'].value_counts().head(10)
+        if not ind_counts.empty:
             fig_ind = px.bar(
-                x=indication_counts.values, 
-                y=indication_counts.index,
+                x=ind_counts.values,
+                y=ind_counts.index,
                 orientation='h',
                 labels={'x': 'Number of Programs', 'y': 'Indication'},
-                title="Leading Therapeutic Areas"
+                title="Leading Therapeutic Areas (filtered)"
             )
             fig_ind.update_layout(**plotly_layout, height=400)
             st.plotly_chart(fig_ind, use_container_width=True)
-        
-        # Programs by development stage
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if 'summary_stats' in data and 'programs_by_stage' in data['summary_stats']:
-                stage_data = data['summary_stats']['programs_by_stage']
+        else:
+            st.info("No indications match the current filters.")
+    else:
+        st.info("No indication data available.")
+
+    # Two-up: Stage + Modality (both computed from filtered programs)
+    c1, c2 = st.columns(2)
+
+    with c1:
+        stage_col = 'development_stage_final' if 'development_stage_final' in fdf.columns else None
+        if stage_col and not fdf.empty:
+            stage_counts = fdf[stage_col].value_counts()
+            if not stage_counts.empty:
                 fig_stage = px.pie(
-                    values=list(stage_data.values()),
-                    names=list(stage_data.keys()),
-                    title="Development Stage Distribution",
+                    values=stage_counts.values,
+                    names=stage_counts.index,
+                    title="Development Stage Distribution (filtered)",
                     hole=0.4
                 )
                 fig_stage.update_layout(**plotly_layout)
                 fig_stage.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig_stage, use_container_width=True)
-        
-        with col2:
-            if 'summary_stats' in data and 'programs_by_modality' in data['summary_stats']:
-                modality_data = data['summary_stats']['programs_by_modality']
-                top_modalities = dict(sorted(modality_data.items(), 
-                                           key=lambda x: x[1], 
-                                           reverse=True)[:8])
+            else:
+                st.info("No stages match the current filters.")
+        else:
+            st.info("No stage data available.")
+
+    with c2:
+        mod_col = 'modality_final' if 'modality_final' in fdf.columns else None
+        if mod_col and not fdf.empty:
+            mod_counts = fdf[mod_col].value_counts().head(8)
+            if not mod_counts.empty:
                 fig_mod = px.bar(
-                    x=list(top_modalities.values()),
-                    y=list(top_modalities.keys()),
+                    x=mod_counts.values,
+                    y=mod_counts.index,
                     orientation='h',
-                    title="Technology Platforms"
+                    title="Technology Platforms (filtered)"
                 )
                 fig_mod.update_layout(**plotly_layout)
                 st.plotly_chart(fig_mod, use_container_width=True)
-    
-    else:
-        st.info("Please upload a dataset file to begin analysis")
+            else:
+                st.info("No modalities match the current filters.")
+        else:
+            st.info("No modality data available.")
+
+
+
 
 elif st.session_state.current_page == 'Programs' and st.session_state.data:
     data = st.session_state.data
@@ -252,24 +380,37 @@ elif st.session_state.current_page == 'Programs' and st.session_state.data:
     st.title("Drug Development Programs")
     
     # Filters
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        indications = ['All'] + list(programs_df['indication_group'].unique())
+    cols = st.columns(6)
+
+    def _opts(df, col):
+        if col in df.columns:
+            return ['All'] + sorted([x for x in df[col].dropna().unique() if str(x).strip() != ""])
+        return ['All']
+
+    with cols[0]:
+        indications = _opts(programs_df, 'indication_group')
         selected_indication = st.selectbox("Indication", indications)
-    
-    with col2:
-        targets = ['All'] + list(programs_df['target_family_final'].unique())
+
+    with cols[1]:
+        targets = _opts(programs_df, 'target_family_final')
         selected_target = st.selectbox("Target Family", targets)
-    
-    with col3:
-        classifications = ['All'] + list(programs_df['program_classification_final'].unique())
+
+    with cols[2]:
+        classifications = _opts(programs_df, 'program_classification_final')
         selected_classification = st.selectbox("Classification", classifications)
-    
-    with col4:
-        modalities = ['All'] + list(programs_df['modality_final'].unique())
+
+    with cols[3]:
+        modalities = _opts(programs_df, 'modality_final')
         selected_modality = st.selectbox("Modality", modalities)
-    
+
+    with cols[4]:
+        deliveries = _opts(programs_df, 'platform_delivery_final')
+        selected_delivery = st.selectbox("Delivery", deliveries)
+
+    with cols[5]:
+        stages = _opts(programs_df, 'development_stage_final')
+        selected_stage = st.selectbox("Development Stage", stages)
+
     # Apply filters
     filtered_df = programs_df.copy()
     if selected_indication != 'All':
@@ -280,6 +421,11 @@ elif st.session_state.current_page == 'Programs' and st.session_state.data:
         filtered_df = filtered_df[filtered_df['program_classification_final'] == selected_classification]
     if selected_modality != 'All':
         filtered_df = filtered_df[filtered_df['modality_final'] == selected_modality]
+    if selected_delivery != 'All':
+        filtered_df = filtered_df[filtered_df['platform_delivery_final'] == selected_delivery]
+    if selected_stage != 'All':
+        filtered_df = filtered_df[filtered_df['development_stage_final'] == selected_stage]
+
     
     st.markdown(f"### Results: {len(filtered_df)} programs")
     
@@ -325,7 +471,7 @@ elif st.session_state.current_page == 'Programs' and st.session_state.data:
             if trials:
                 st.markdown("#### Clinical Development")
                 for trial in trials:
-                    st.markdown(f"- **{safe_get(trial, 'trial_id')}**: {safe_get(trial, 'phase')} - {safe_get(trial, 'status')}")
+                    st.markdown(f"- **{trial_links(trial.get('trial_id'))}**: {safe_get(trial, 'phase')} – {safe_get(trial, 'status')}")
             
 
             st.markdown(f"**Milestones:** {safe_get(program, 'timeline_milestones')}")
@@ -341,6 +487,148 @@ elif st.session_state.current_page == 'Programs' and st.session_state.data:
             red_flags = safe_get(program, 'red_flags')
             if red_flags != 'N/A':
                 st.warning(f"**Risk Factors:** {red_flags}")
+
+
+elif st.session_state.current_page == 'Companies' and st.session_state.data:
+    data = st.session_state.data
+    companies_df = pd.DataFrame(data.get('companies', []))
+    programs_df  = pd.DataFrame(data.get('programs',  []))
+    trials_df    = pd.DataFrame(data.get('trials',    []))
+
+    st.title("Companies")
+
+    if companies_df.empty:
+        st.info("No company data available.")
+    else:
+        # --- derived metrics ---
+        prog_counts = programs_df['company_name'].value_counts() if not programs_df.empty else pd.Series(dtype=int)
+        companies_df['active_programs'] = companies_df['company_name'].map(prog_counts).fillna(0).astype(int)
+
+        if 'total_funding_numeric' in companies_df.columns:
+            companies_df['total_funding_numeric'] = pd.to_numeric(companies_df['total_funding_numeric'], errors='coerce')
+
+        # --- filters ---
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            name_query = st.text_input("Search name", "")
+        with c2:
+            types = ['All'] + sorted([x for x in companies_df['public_private'].dropna().unique()])
+            sel_type = st.selectbox("Type", types)
+        with c3:
+            countries = ['All'] + sorted([x for x in companies_df['country_normalized'].dropna().unique()])
+            sel_country = st.selectbox("Country", countries)
+        with c4:
+            sizes = ['All'] + sorted([x for x in companies_df['size_category'].dropna().unique()])
+            sel_size = st.selectbox("Size", sizes)
+
+        sort_by = st.selectbox("Sort by", ["Name (A→Z)", "Active programs (↓)", "Total funding (↓)"])
+
+        # --- apply filters ---
+        fdf = companies_df.copy()
+        if name_query.strip():
+            nq = name_query.strip().lower()
+            fdf = fdf[fdf['company_name'].fillna("").str.lower().str.contains(nq)]
+        if sel_type != 'All':
+            fdf = fdf[fdf['public_private'] == sel_type]
+        if sel_country != 'All':
+            fdf = fdf[fdf['country_normalized'] == sel_country]
+        if sel_size != 'All':
+            fdf = fdf[fdf['size_category'] == sel_size]
+
+        # --- sort ---
+        if sort_by == "Name (A→Z)":
+            fdf = fdf.sort_values(by='company_name', ascending=True, na_position='last')
+        elif sort_by == "Active programs (↓)":
+            fdf = fdf.sort_values(by='active_programs', ascending=False, na_position='last')
+        else:
+            if 'total_funding_numeric' in fdf.columns:
+                fdf = fdf.sort_values(by='total_funding_numeric', ascending=False, na_position='last')
+
+        st.markdown(f"### Results: {len(fdf)} companies")
+
+        # --- list companies as expandable cards ---
+        for _, comp in fdf.iterrows():
+            name = comp.get('company_name', 'Unknown')
+            headline = f"{str(name).title()} — {safe_get(comp, 'public_private')} | {safe_get(comp, 'country_normalized')} | {int(comp.get('active_programs', 0))} programs"
+
+            with st.expander(headline):
+                # Company Information
+                st.markdown("#### Company Information")
+                a, b, c, d = st.columns(4)
+                with a:
+                    st.markdown(f"**Type:** {safe_get(comp, 'public_private')}")
+                with b:
+                    st.markdown(f"**Country:** {safe_get(comp, 'country_normalized')}")
+                with c:
+                    st.markdown(f"**Size:** {safe_get(comp, 'size_category')}")
+                with d:
+                    st.markdown(f"**Founded:** {safe_get(comp, 'founding_year', 'N/A')}")
+
+                m1, m2, m3, m4 = st.columns(4)
+                with m1:
+                    tf = comp.get('total_funding_numeric', np.nan)
+                    st.metric("Total Funding", format_currency(tf if pd.notna(tf) else 0))
+                with m2:
+                    st.metric("Active Programs", int(comp.get('active_programs', 0)))
+                with m3:
+                    st.metric("HQ City", safe_get(comp, 'city_normalized'))
+                with m4:
+                    # Smaller font for Primary Focus
+                    st.markdown(
+                        f"<div style='font-size: 0.85rem; line-height: 1.2em;'><b>Primary Focus:</b><br>{safe_get(comp, 'company_focus')}</div>",
+                        unsafe_allow_html=True
+                    )
+
+                st.markdown("---")
+
+                # Programs
+                st.markdown("#### Programs")
+                comp_programs = programs_df[programs_df['company_name'] == name] if not programs_df.empty else pd.DataFrame()
+                if comp_programs.empty:
+                    st.info("No programs found for this company.")
+                else:
+                    for _, program in comp_programs.iterrows():
+                        with st.expander(f"{program['program_name'].upper()} | {program['development_stage_final']}"):
+                            cA, cB = st.columns(2)
+                            with cA:
+                                st.markdown(f"**Program:** {program['program_name']}")
+                                st.markdown(f"**Classification:** {program['program_classification_final']}")
+                                st.markdown(f"**Target:** {program['target_primary']}")
+                            with cB:
+                                st.markdown(f"**Indication:** {program['indication_primary']}")
+                                st.markdown(f"**Delivery:** {program['platform_delivery_final']}")
+                                st.markdown(f"**Stage:** {program['development_stage_final']}")
+
+                            st.markdown("**Biological Rationale:** " + safe_get(program, 'biological_rationale_final'))
+                            st.markdown("**Mechanism of Action:** " + safe_get(program, 'mechanism_of_action_detailed_final'))
+
+                            prog_trials = trials_df[trials_df['program_id'] == program['program_id']] if not trials_df.empty else pd.DataFrame()
+                            if not prog_trials.empty:
+                                st.markdown("**Clinical Development:**")
+                                for _, trial in prog_trials.iterrows():
+                                    st.markdown(
+                                        f"- **{trial_links(trial.get('trial_id'))}**: "
+                                        f"{safe_get(trial, 'phase')} – {safe_get(trial, 'status')}"
+                                    )
+
+                            red_flags = safe_get(program, 'red_flags')
+                            if red_flags != 'N/A':
+                                st.warning(f"**Risk Factors:** {red_flags}")
+
+                # Company-level trials
+                st.markdown("#### Clinical Trials (Company Level)")
+                comp_trials = trials_df[trials_df['company_name'] == name] if not trials_df.empty else pd.DataFrame()
+                if comp_trials.empty:
+                    st.info("No company-level trials found.")
+                else:
+                    for _, trial in comp_trials.iterrows():
+                        st.markdown(f"- **{trial_links(trial.get('trial_id'))}**: {safe_get(trial, 'phase')} – {safe_get(trial, 'status')}")
+
+                # Extra notes
+                st.markdown("#### Additional Information")
+                st.markdown(f"**Leadership:** {safe_get(comp, 'leadership')}")
+                st.markdown(f"**Website:** {safe_get(comp, 'website')}")
+                st.markdown(f"**Research Notes:** {safe_get(comp, 'research_notes')}")
 
 elif st.session_state.current_page == 'Clinical Trials' and st.session_state.data:
     data = st.session_state.data
@@ -384,6 +672,9 @@ elif st.session_state.current_page == 'Clinical Trials' and st.session_state.dat
         # Display trials
         for idx, trial in filtered_trials.iterrows():
             with st.expander(f"{safe_get(trial, 'trial_id')} - {trial['company_name'].title() if pd.notna(trial['company_name']) else 'Unknown'}"):
+                # Dedicated link line (expander titles don't render links reliably)
+                st.markdown(f"**ClinicalTrials.gov:** {trial_links(trial.get('trial_id'))}")
+
                 col1, col2 = st.columns(2)
                 
                 with col1:
@@ -492,7 +783,7 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
                             st.markdown("#### Clinical Development")
                             for _, trial in prog_trials.iterrows():
                                 st.markdown(
-                                    f"- **{safe_get(trial, 'trial_id')}**: "
+                                    f"- **{trial_links(trial.get('trial_id'))}**: "
                                     f"{safe_get(trial, 'phase')} – {safe_get(trial, 'status')}"
                                 )
                         st.markdown(f"**Milestones:** {safe_get(program, 'timeline_milestones')}")
@@ -502,7 +793,6 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
                         st.markdown(f"**Data Quality Index:** {safe_get(program, 'data_quality_index')}")
                         st.markdown(f"**Research Notes:** {safe_get(program, 'research_notes')}")
 
-
                         red_flags = safe_get(program, 'red_flags')
                         if red_flags != 'N/A':
                             st.warning(f"**Risk Factors:** {red_flags}")
@@ -511,7 +801,7 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
                 if not comp1_trials.empty:
                     for _, trial in comp1_trials.iterrows():
                         st.markdown(
-                            f"- **{safe_get(trial, 'trial_id')}** | "
+                            f"- **{trial_links(trial.get('trial_id'))}** | "
                             f"{safe_get(trial, 'phase')} • {safe_get(trial, 'status')} • "
                             f"{safe_get(trial, 'indication')} • "
                             f"Enroll: {safe_get(trial, 'enrollment_target')}"
@@ -553,7 +843,7 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
                             st.markdown("#### Clinical Development")
                             for _, trial in prog_trials.iterrows():
                                 st.markdown(
-                                    f"- **{safe_get(trial, 'trial_id')}**: "
+                                    f"- **{trial_links(trial.get('trial_id'))}**: "
                                     f"{safe_get(trial, 'phase')} – {safe_get(trial, 'status')}"
                                 )
                         
@@ -572,13 +862,19 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
                 if not comp2_trials.empty:
                     for _, trial in comp2_trials.iterrows():
                         st.markdown(
-                            f"- **{safe_get(trial, 'trial_id')}** | "
+                            f"- **{trial_links(trial.get('trial_id'))}** | "
                             f"{safe_get(trial, 'phase')} • {safe_get(trial, 'status')} • "
                             f"{safe_get(trial, 'indication')} • "
                             f"Enroll: {safe_get(trial, 'enrollment_target')}"
                         )
                 else:
                     st.info("No trials found")
+
+
+
+
+
+
 
 
 elif st.session_state.current_page == 'Cluster Analysis' and st.session_state.data:
