@@ -11,8 +11,9 @@ from itertools import combinations
 import ast
 import re
 
-
+# -------------------------------
 # Page config
+# -------------------------------
 st.set_page_config(
     page_title="Competitive Intelligence Platform",
     page_icon="⚡",
@@ -22,25 +23,39 @@ st.set_page_config(
 
 # Professional dark theme CSS with better contrast
 st.markdown("""
-<style>
-  /* only override non-form widgets now: */
-  div[data-testid="metric-container"] { 
-    background-color: #252830;
-    border: 1px solid #3a3f4b;
-    /* …etc… */
-  }
-  .streamlit-expanderHeader { /* … */ }
-  .streamlit-expanderContent { /* … */ }
-  /* you no longer need any .stSelectbox or popover rules */
-</style>
-""", unsafe_allow_html=True)
+    <style>
+    div[data-testid="metric-container"] { 
+        background-color: #252830;
+        border: 1px solid #3a3f4b;
+        border-radius: 10px;
+        padding: 10px;
+    }
+    .streamlit-expanderHeader { 
+        background: #1f2229; 
+        color: #e6e6e6; 
+        border-radius: 6px; 
+    }
+    .streamlit-expanderContent { 
+        background: #232730; 
+        border: 1px solid #343a46; 
+        border-radius: 0 0 6px 6px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-# Initialize session state
+# -------------------------------
+# Session state
+# -------------------------------
 if 'data' not in st.session_state:
     st.session_state.data = None
 if 'current_page' not in st.session_state:
     st.session_state.current_page = 'Overview'
+if 'trials_df_norm' not in st.session_state:
+    st.session_state.trials_df_norm = pd.DataFrame()
 
+# -------------------------------
+# Helpers
+# -------------------------------
 def load_data(uploaded_file):
     """Load and parse the uploaded JSON data"""
     if uploaded_file is not None:
@@ -94,12 +109,11 @@ def trial_links(raw):
     return " • ".join(f"[{tid}](https://clinicaltrials.gov/study/{tid})" for tid in ids)
 
 
-
 def safe_get(dict_obj, key, default="N/A"):
     """
     Safely extract a display string:
       • None / NaN / empty list    → default
-      • real list/tuple             → "\n".join(items)
+      • real list/tuple             → "\\n".join(items)
       • str that looks like [ ... ] → literal_eval → list → join
       • otherwise                   → str(value)
     """
@@ -141,35 +155,67 @@ def safe_get(dict_obj, key, default="N/A"):
     # 4) scalar fallback
     return str(value)
 
+def normalize_trials(trials_df: pd.DataFrame) -> pd.DataFrame:
+    """Explode multi-NCT rows into one row per trial and assign a stable trial_key."""
+    if trials_df is None or trials_df.empty:
+        return pd.DataFrame()
 
+    df = trials_df.copy()
 
-# Sidebar navigation
-with st.sidebar:
-    st.markdown("## COMPETITIVE INTELLIGENCE")
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    
-    # Navigation menu
-    pages = ['Overview', 'Programs', 'Companies', 'Clinical Trials', 'Compare', 'Cluster Analysis']
-    selected_page = st.radio("Navigation", pages, key='nav_radio')
-    st.session_state.current_page = selected_page
-    
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    st.caption("Competitive Intelligence Viz v2.0")
+    # Ensure string type and extract NCTs
+    if 'trial_id' not in df.columns:
+        df['trial_id'] = None
+    df['__nct_list'] = df['trial_id'].apply(parse_nct_ids)
 
+    # If a row has no NCT, keep it as a single row with empty NCT marker
+    df['__nct_list'] = df['__nct_list'].apply(lambda x: x if x else [None])
+
+    # One row per NCT ID
+    df = df.explode('__nct_list', ignore_index=True)
+    df['nct_id'] = df['__nct_list']
+    df.drop(columns=['__nct_list'], inplace=True)
+
+    # Stable trial_key: prefer the actual NCT, otherwise derive a deterministic key
+    def _fallback_key(r):
+        parts = [
+            str(r.get('program_id', 'NA')),
+            str(r.get('phase', 'NA')),
+            str(r.get('trial_title', 'NA'))[:120],  # cap length to avoid huge keys
+        ]
+        return "||".join(parts)
+
+    df['trial_key'] = np.where(
+        df['nct_id'].notna() & (df['nct_id'].astype(str).str.len() > 0),
+        df['nct_id'].astype(str),
+        df.apply(_fallback_key, axis=1)
+    )
+
+    # Optional: keep a clean display label
+    df['trial_label'] = np.where(
+        df['nct_id'].notna() & (df['nct_id'].astype(str).str.len() > 0),
+        df['nct_id'],
+        df['trial_key']
+    )
+
+    return df
+
+# -------------------------------
+# Plotly theme
+# -------------------------------
 plotly_layout = dict(
-    plot_bgcolor='#FFFFFF',            # white plotting area
-    paper_bgcolor='#FFFFFF',           # white page background
+    plot_bgcolor='#FFFFFF',
+    paper_bgcolor='#FFFFFF',
     font=dict(
-        color='#2A3F5F',               # dark slate blue text
-        family='Arial, sans-serif',    # clean, professional font
+        color='#2A3F5F',
+        family='Arial, sans-serif',
         size=12
     ),
     xaxis=dict(
-        gridcolor='#E5E5E5',           # very light gray grid
-        zerolinecolor='#E5E5E5',       # match grid for zero line
+        gridcolor='#E5E5E5',
+        zerolinecolor='#E5E5E5',
         showgrid=True,
         zeroline=True,
-        linecolor='#CCCCCC',           # light axis line
+        linecolor='#CCCCCC',
         tickcolor='#2A3F5F'
     ),
     yaxis=dict(
@@ -181,24 +227,37 @@ plotly_layout = dict(
         tickcolor='#2A3F5F'
     ),
     colorway=[
-        '#4C78A8',  # muted blue
-        '#54A24B',  # medium green
-        '#E45756',  # soft red
-        '#79C36A',  # light green
-        '#72B7B2',  # teal
-        '#EECA3B',  # gold
-        '#9B5DE5',  # purple
-        '#7080A0'   # slate gray
+        '#4C78A8',
+        '#54A24B',
+        '#E45756',
+        '#79C36A',
+        '#72B7B2',
+        '#EECA3B',
+        '#9B5DE5',
+        '#7080A0'
     ],
-    margin=dict(l=60, r=40, t=50, b=50),  # adjust padding if needed
+    margin=dict(l=60, r=40, t=50, b=50),
     hoverlabel=dict(
         bgcolor='rgba(255,255,255,0.9)',
         font_color='#2A3F5F'
     )
 )
 
+# -------------------------------
+# Sidebar navigation
+# -------------------------------
+with st.sidebar:
+    st.markdown("## COMPETITIVE INTELLIGENCE")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    pages = ['Overview', 'Programs', 'Companies', 'Clinical Trials', 'Compare', 'Cluster Analysis']
+    selected_page = st.radio("Navigation", pages, key='nav_radio')
+    st.session_state.current_page = selected_page
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.caption("Competitive Intelligence Viz v2.0")
 
-# Main content area
+# =========================================================
+# OVERVIEW
+# =========================================================
 if st.session_state.current_page == 'Overview':
     st.title("Overview")
 
@@ -214,26 +273,31 @@ if st.session_state.current_page == 'Overview':
         st.session_state.data = load_data(uploaded_file)
         st.success("Data loaded successfully")
 
+        # Build normalized trials and cache in session
+        data = st.session_state.data or {}
+        trials_df_raw = pd.DataFrame(data.get('trials', []))
+        st.session_state.trials_df_norm = normalize_trials(trials_df_raw)
+
     if not st.session_state.data:
         st.info("Please upload a dataset to begin analysis")
         st.stop()
 
-    # --- Base DataFrames ---
+    # Base DataFrames
     data = st.session_state.data
     programs_df   = pd.DataFrame(data.get('programs', []))
     companies_df  = pd.DataFrame(data.get('companies', []))
-    trials_df     = pd.DataFrame(data.get('trials', []))
+    trials_df_raw = pd.DataFrame(data.get('trials', []))
+    trials_df_norm = st.session_state.trials_df_norm if not st.session_state.trials_df_norm.empty else normalize_trials(trials_df_raw)
     partnerships  = pd.DataFrame(data.get('partnerships', []))
 
     if programs_df.empty:
         st.warning("No program data found.")
         st.stop()
 
-    # --- Filters (shown before plots) ---
+    # Filters
     st.markdown("### Filters")
     f1, f2, f3, f4 = st.columns(4)
 
-    # Safely get unique options
     def uniq(series):
         if series.name not in programs_df.columns:
             return []
@@ -265,9 +329,8 @@ if st.session_state.current_page == 'Overview':
             default=[],
         )
 
-    # --- Apply filters ---
+    # Apply filters to programs
     fdf = programs_df.copy()
-
     if sel_indications:
         fdf = fdf[fdf['indication_group'].isin(sel_indications)]
     if sel_targets:
@@ -277,17 +340,16 @@ if st.session_state.current_page == 'Overview':
     if sel_modality:
         fdf = fdf[fdf['modality_final'].isin(sel_modality)]
 
-    # --- Derived sets for metrics ---
+    # Derived sets for metrics
     filtered_company_names = set(fdf['company_name'].dropna().unique())
     filtered_program_ids   = set(fdf['program_id'].dropna().unique()) if 'program_id' in fdf else set()
 
     trials_f = pd.DataFrame()
-    if not trials_df.empty and 'program_id' in trials_df.columns and filtered_program_ids:
-        trials_f = trials_df[trials_df['program_id'].isin(filtered_program_ids)]
+    if not trials_df_norm.empty and 'program_id' in trials_df_norm.columns and filtered_program_ids:
+        trials_f = trials_df_norm[trials_df_norm['program_id'].isin(filtered_program_ids)]
 
     partnerships_f = pd.DataFrame()
     if not partnerships.empty:
-        # Count partnerships where at least one company is in the filtered set
         col_candidates = [c for c in partnerships.columns if 'company' in c.lower() or 'partner' in c.lower()]
         if col_candidates:
             mask = False
@@ -295,7 +357,7 @@ if st.session_state.current_page == 'Overview':
                 mask = mask | partnerships[c].isin(filtered_company_names)
             partnerships_f = partnerships[mask]
 
-    # --- Key Metrics (filtered) ---
+    # Key Metrics (filtered)
     st.markdown("### Key Metrics")
     m1, m2, m3, m4 = st.columns(4)
     with m1:
@@ -303,14 +365,14 @@ if st.session_state.current_page == 'Overview':
     with m2:
         st.metric("Active Programs", len(fdf))
     with m3:
-        st.metric("Clinical Trials", len(trials_f))
+        # use distinct trials by trial_key
+        st.metric("Clinical Trials", len(trials_f.drop_duplicates(subset=['trial_key'])) if not trials_f.empty else 0)
     with m4:
         st.metric("Partnerships", len(partnerships_f))
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-    # --- Overview Plots (filtered) ---
-    # Therapeutic Area Distribution
+    # Overview Plots (filtered)
     st.markdown("### Therapeutic Area Distribution")
     if 'indication_group' in fdf.columns and not fdf.empty:
         ind_counts = fdf['indication_group'].value_counts().head(10)
@@ -329,9 +391,7 @@ if st.session_state.current_page == 'Overview':
     else:
         st.info("No indication data available.")
 
-    # Two-up: Stage + Modality (both computed from filtered programs)
     c1, c2 = st.columns(2)
-
     with c1:
         stage_col = 'development_stage_final' if 'development_stage_final' in fdf.columns else None
         if stage_col and not fdf.empty:
@@ -369,19 +429,19 @@ if st.session_state.current_page == 'Overview':
         else:
             st.info("No modality data available.")
 
-
-
-
+# =========================================================
+# PROGRAMS
+# =========================================================
 elif st.session_state.current_page == 'Programs' and st.session_state.data:
     data = st.session_state.data
     programs_df = pd.DataFrame(data.get('programs', []))
     companies_df = pd.DataFrame(data.get('companies', []))
-    
+    trials_df_norm = st.session_state.trials_df_norm
+
     st.title("Drug Development Programs")
-    
+
     # Filters
     cols = st.columns(6)
-
     def _opts(df, col):
         if col in df.columns:
             return ['All'] + sorted([x for x in df[col].dropna().unique() if str(x).strip() != ""])
@@ -426,15 +486,14 @@ elif st.session_state.current_page == 'Programs' and st.session_state.data:
     if selected_stage != 'All':
         filtered_df = filtered_df[filtered_df['development_stage_final'] == selected_stage]
 
-    
     st.markdown(f"### Results: {len(filtered_df)} programs")
-    
+
     # Display programs as expandable cards
-    for idx, program in filtered_df.iterrows():
-        company = companies_df[companies_df['company_id'] == program['company_id']].iloc[0] if not companies_df[companies_df['company_id'] == program['company_id']].empty else {}
-        
+    for _, program in filtered_df.iterrows():
+        company_row = companies_df[companies_df['company_id'] == program['company_id']]
+        company = company_row.iloc[0].to_dict() if not company_row.empty else {}
+
         with st.expander(f"{program['program_name'].upper()} - {program['company_name'].title()} | {program['development_stage_final']}"):
-            
             # Company Info Section
             st.markdown("#### Company Information")
             col1, col2, col3, col4 = st.columns(4)
@@ -446,68 +505,74 @@ elif st.session_state.current_page == 'Programs' and st.session_state.data:
                 st.markdown(f"**Size:** {safe_get(company, 'size_category')}")
             with col4:
                 st.markdown(f"**Founded:** {safe_get(company, 'founding_year', 'N/A')}")
-            
+
             st.markdown("---")
-            
+
             # Program Overview
             st.markdown("#### Program Details")
-            col1, col2 = st.columns(2)
-            with col1:
+            c1, c2 = st.columns(2)
+            with c1:
                 st.markdown(f"**Program:** {program['program_name']}")
                 st.markdown(f"**Classification:** {program['program_classification_final']}")
                 st.markdown(f"**Target:** {program['target_primary']}")
-            with col2:
+            with c2:
                 st.markdown(f"**Indication:** {program['indication_primary']}")
                 st.markdown(f"**Delivery:** {program['platform_delivery_final']}")
                 st.markdown(f"**Stage:** {program['development_stage_final']}")
-            
+
             # Scientific Details
             st.markdown("#### Scientific Rationale")
             st.markdown(f"**Biological Rationale:** {safe_get(program, 'biological_rationale_final')}")
             st.markdown(f"**Mechanism of Action:** {safe_get(program, 'mechanism_of_action_detailed_final')}")
-            
-            # Clinical Trials
-            trials = [t for t in data.get('trials', []) if t.get('program_id') == program['program_id']]
-            if trials:
+
+            # Clinical Trials (normalized & de-duped by trial_key)
+            prog_trials = pd.DataFrame()
+            if not trials_df_norm.empty:
+                prog_trials = trials_df_norm[trials_df_norm['program_id'] == program['program_id']]
+            if not prog_trials.empty:
                 st.markdown("#### Clinical Development")
-                for trial in trials:
-                    st.markdown(f"- **{trial_links(trial.get('trial_id'))}**: {safe_get(trial, 'phase')} – {safe_get(trial, 'status')}")
-            
+                prog_trials = prog_trials.drop_duplicates(subset=['trial_key'])
+                for _, tr in prog_trials.iterrows():
+                    if pd.notna(tr['nct_id']) and tr['nct_id']:
+                        nct_display = f"[{tr['nct_id']}](https://clinicaltrials.gov/study/{tr['nct_id']})"
+                    else:
+                        nct_display = "N/A"
+                    st.markdown(f"- **{nct_display}**: {safe_get(tr, 'phase')} – {safe_get(tr, 'status')}")
 
             st.markdown(f"**Milestones:** {safe_get(program, 'timeline_milestones')}")
 
-                     
             # Additional Information
             st.markdown("#### Additional Information")
             st.markdown(f"**Research Notes:** {safe_get(program, 'research_notes')}")
             st.markdown(f"**Key Publications:** {safe_get(program, 'key_scientific_paper')}")
             st.markdown(f"**Data Quality Index:** {safe_get(program, 'data_quality_index')}")
-            
 
             red_flags = safe_get(program, 'red_flags')
             if red_flags != 'N/A':
                 st.warning(f"**Risk Factors:** {red_flags}")
 
-
+# =========================================================
+# COMPANIES
+# =========================================================
 elif st.session_state.current_page == 'Companies' and st.session_state.data:
     data = st.session_state.data
     companies_df = pd.DataFrame(data.get('companies', []))
     programs_df  = pd.DataFrame(data.get('programs',  []))
-    trials_df    = pd.DataFrame(data.get('trials',    []))
+    trials_df_norm = st.session_state.trials_df_norm
 
     st.title("Companies")
 
     if companies_df.empty:
         st.info("No company data available.")
     else:
-        # --- derived metrics ---
+        # derived metrics
         prog_counts = programs_df['company_name'].value_counts() if not programs_df.empty else pd.Series(dtype=int)
         companies_df['active_programs'] = companies_df['company_name'].map(prog_counts).fillna(0).astype(int)
 
         if 'total_funding_numeric' in companies_df.columns:
             companies_df['total_funding_numeric'] = pd.to_numeric(companies_df['total_funding_numeric'], errors='coerce')
 
-        # --- filters ---
+        # filters
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             name_query = st.text_input("Search name", "")
@@ -523,7 +588,7 @@ elif st.session_state.current_page == 'Companies' and st.session_state.data:
 
         sort_by = st.selectbox("Sort by", ["Name (A→Z)", "Active programs (↓)", "Total funding (↓)"])
 
-        # --- apply filters ---
+        # apply filters
         fdf = companies_df.copy()
         if name_query.strip():
             nq = name_query.strip().lower()
@@ -535,7 +600,7 @@ elif st.session_state.current_page == 'Companies' and st.session_state.data:
         if sel_size != 'All':
             fdf = fdf[fdf['size_category'] == sel_size]
 
-        # --- sort ---
+        # sort
         if sort_by == "Name (A→Z)":
             fdf = fdf.sort_values(by='company_name', ascending=True, na_position='last')
         elif sort_by == "Active programs (↓)":
@@ -546,7 +611,7 @@ elif st.session_state.current_page == 'Companies' and st.session_state.data:
 
         st.markdown(f"### Results: {len(fdf)} companies")
 
-        # --- list companies as expandable cards ---
+        # list companies as expandable cards
         for _, comp in fdf.iterrows():
             name = comp.get('company_name', 'Unknown')
             headline = f"{str(name).title()} — {safe_get(comp, 'public_private')} | {safe_get(comp, 'country_normalized')} | {int(comp.get('active_programs', 0))} programs"
@@ -573,7 +638,6 @@ elif st.session_state.current_page == 'Companies' and st.session_state.data:
                 with m3:
                     st.metric("HQ City", safe_get(comp, 'city_normalized'))
                 with m4:
-                    # Smaller font for Primary Focus
                     st.markdown(
                         f"<div style='font-size: 0.85rem; line-height: 1.2em;'><b>Primary Focus:</b><br>{safe_get(comp, 'company_focus')}</div>",
                         unsafe_allow_html=True
@@ -602,27 +666,28 @@ elif st.session_state.current_page == 'Companies' and st.session_state.data:
                             st.markdown("**Biological Rationale:** " + safe_get(program, 'biological_rationale_final'))
                             st.markdown("**Mechanism of Action:** " + safe_get(program, 'mechanism_of_action_detailed_final'))
 
-                            prog_trials = trials_df[trials_df['program_id'] == program['program_id']] if not trials_df.empty else pd.DataFrame()
+                            prog_trials = pd.DataFrame()
+                            if not trials_df_norm.empty:
+                                prog_trials = trials_df_norm[trials_df_norm['program_id'] == program['program_id']]
                             if not prog_trials.empty:
                                 st.markdown("**Clinical Development:**")
-                                for _, trial in prog_trials.iterrows():
-                                    st.markdown(
-                                        f"- **{trial_links(trial.get('trial_id'))}**: "
-                                        f"{safe_get(trial, 'phase')} – {safe_get(trial, 'status')}"
-                                    )
+                                for _, tr in prog_trials.drop_duplicates(subset=['trial_key']).iterrows():
+                                    nct_display = f"[{tr['nct_id']}](https://clinicaltrials.gov/study/{tr['nct_id']})" if pd.notna(tr['nct_id']) and tr['nct_id'] else "N/A"
+                                    st.markdown(f"- **{nct_display}**: {safe_get(tr, 'phase')} – {safe_get(tr, 'status')}")
 
                             red_flags = safe_get(program, 'red_flags')
                             if red_flags != 'N/A':
                                 st.warning(f"**Risk Factors:** {red_flags}")
 
-                # Company-level trials
+                # Company-level trials (normalized)
                 st.markdown("#### Clinical Trials (Company Level)")
-                comp_trials = trials_df[trials_df['company_name'] == name] if not trials_df.empty else pd.DataFrame()
+                comp_trials = trials_df_norm[trials_df_norm['company_name'] == name] if not trials_df_norm.empty else pd.DataFrame()
                 if comp_trials.empty:
                     st.info("No company-level trials found.")
                 else:
-                    for _, trial in comp_trials.iterrows():
-                        st.markdown(f"- **{trial_links(trial.get('trial_id'))}**: {safe_get(trial, 'phase')} – {safe_get(trial, 'status')}")
+                    for _, trial in comp_trials.drop_duplicates(subset=['trial_key']).iterrows():
+                        nct_display = f"[{trial['nct_id']}](https://clinicaltrials.gov/study/{trial['nct_id']})" if pd.notna(trial['nct_id']) and trial['nct_id'] else "N/A"
+                        st.markdown(f"- **{nct_display}**: {safe_get(trial, 'phase')} – {safe_get(trial, 'status')}")
 
                 # Extra notes
                 st.markdown("#### Additional Information")
@@ -630,77 +695,82 @@ elif st.session_state.current_page == 'Companies' and st.session_state.data:
                 st.markdown(f"**Website:** {safe_get(comp, 'website')}")
                 st.markdown(f"**Research Notes:** {safe_get(comp, 'research_notes')}")
 
+# =========================================================
+# CLINICAL TRIALS
+# =========================================================
 elif st.session_state.current_page == 'Clinical Trials' and st.session_state.data:
     data = st.session_state.data
-    trials_df = pd.DataFrame(data.get('trials', []))
-    
+    trials_df_norm = st.session_state.trials_df_norm
+
     st.title("Clinical Trial Analysis")
-    
-    if not trials_df.empty:
+
+    if trials_df_norm.empty:
+        st.info("No trial data available.")
+    else:
         # Filters
         col1, col2, col3, col4 = st.columns(4)
-        
         with col1:
-            indications = ['All'] + list(trials_df['indication'].dropna().unique())
+            indications = ['All'] + sorted([x for x in trials_df_norm['indication'].dropna().unique()]) if 'indication' in trials_df_norm.columns else ['All']
             selected_indication = st.selectbox("Indication", indications)
-        
         with col2:
-            phases = ['All'] + list(trials_df['phase'].dropna().unique())
+            phases = ['All'] + sorted([x for x in trials_df_norm['phase'].dropna().unique()]) if 'phase' in trials_df_norm.columns else ['All']
             selected_phase = st.selectbox("Phase", phases)
-        
         with col3:
-            statuses = ['All'] + list(trials_df['status'].dropna().unique())
+            statuses = ['All'] + sorted([x for x in trials_df_norm['status'].dropna().unique()]) if 'status' in trials_df_norm.columns else ['All']
             selected_status = st.selectbox("Status", statuses)
-        
         with col4:
-            companies = ['All'] + list(trials_df['company_name'].dropna().unique())
+            companies = ['All'] + sorted([x for x in trials_df_norm['company_name'].dropna().unique()]) if 'company_name' in trials_df_norm.columns else ['All']
             selected_company = st.selectbox("Sponsor", companies)
-        
+
         # Apply filters
-        filtered_trials = trials_df.copy()
-        if selected_indication != 'All':
+        filtered_trials = trials_df_norm.copy()
+        if selected_indication != 'All' and 'indication' in filtered_trials.columns:
             filtered_trials = filtered_trials[filtered_trials['indication'] == selected_indication]
-        if selected_phase != 'All':
+        if selected_phase != 'All' and 'phase' in filtered_trials.columns:
             filtered_trials = filtered_trials[filtered_trials['phase'] == selected_phase]
-        if selected_status != 'All':
+        if selected_status != 'All' and 'status' in filtered_trials.columns:
             filtered_trials = filtered_trials[filtered_trials['status'] == selected_status]
-        if selected_company != 'All':
+        if selected_company != 'All' and 'company_name' in filtered_trials.columns:
             filtered_trials = filtered_trials[filtered_trials['company_name'] == selected_company]
-        
-        st.markdown(f"### Results: {len(filtered_trials)} trials")
-        
+
+        dedup = filtered_trials.drop_duplicates(subset=['trial_key'])
+        st.markdown(f"### Results: {len(dedup)} trials")
+
         # Display trials
-        for idx, trial in filtered_trials.iterrows():
-            with st.expander(f"{safe_get(trial, 'trial_id')} - {trial['company_name'].title() if pd.notna(trial['company_name']) else 'Unknown'}"):
-                # Dedicated link line (expander titles don't render links reliably)
-                st.markdown(f"**ClinicalTrials.gov:** {trial_links(trial.get('trial_id'))}")
+        for _, trial in dedup.iterrows():
+            title_left = (trial['nct_id'] if pd.notna(trial['nct_id']) and trial['nct_id'] else trial['trial_label'])
+            sponsor_disp = trial['company_name'].title() if pd.notna(trial.get('company_name')) else 'Unknown'
+            with st.expander(f"{title_left} - {sponsor_disp}"):
+                # Dedicated link line
+                # Accept both nct_id or original trial_id in case some are missing NCTs
+                link_source = trial.get('nct_id') or trial.get('trial_id')
+                st.markdown(f"**ClinicalTrials.gov:** {trial_links(link_source)}")
 
                 col1, col2 = st.columns(2)
-                
                 with col1:
                     st.markdown(f"**Program:** {safe_get(trial, 'program_name')}")
                     st.markdown(f"**Phase:** {safe_get(trial, 'phase')}")
                     st.markdown(f"**Status:** {safe_get(trial, 'status')}")
                     st.markdown(f"**Indication:** {safe_get(trial, 'indication')}")
-                
                 with col2:
                     st.markdown(f"**Sponsor:** {safe_get(trial, 'sponsor')}")
                     st.markdown(f"**Target Enrollment:** {safe_get(trial, 'enrollment_target')}")
                     st.markdown(f"**Countries:** {safe_get(trial, 'countries_normalized')}")
                     st.markdown(f"**Title:** {safe_get(trial, 'trial_title')}")
 
+# =========================================================
+# COMPARE
+# =========================================================
 elif st.session_state.current_page == 'Compare' and st.session_state.data:
     data = st.session_state.data
     programs_df = pd.DataFrame(data.get('programs', []))
     companies_df = pd.DataFrame(data.get('companies', []))
-    trials_df   = pd.DataFrame(data.get('trials',   []))
+    trials_df_norm = st.session_state.trials_df_norm
 
     st.title("Comparative Analysis")
-
     tab1, tab2 = st.tabs(["Portfolio Distribution", "Company Benchmarking"])
 
-    # ————————————————
-    # Tab 1: Cross‐Dimensional Matrix
+    # ----- Tab 1: Portfolio Distribution (Programs only for clarity) -----
     with tab1:
         st.markdown("### Portfolio Distribution")
 
@@ -710,10 +780,8 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
             horizontal=True
         )
 
-        # ---------- VIEW A: Company × Phase (Programs/Trials) ----------
         if view == "Company × Phase":
             src = st.radio("Analyze:", ["Programs"], horizontal=True)
-            normalize = st.checkbox("Show as percentage within company", value=False)
             min_items = st.number_input("Min items per company (filter small players)", min_value=0, value=0, step=1)
 
             def _pick(df, name, prefs):
@@ -722,19 +790,11 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
                         return p
                 raise KeyError(f"Missing required column for {name}: tried {prefs}")
 
-            # choose data source
-            if src == "Trials" and 'trials_df' in locals() and isinstance(trials_df, pd.DataFrame) and not trials_df.empty:
-                df = trials_df.copy()
-                company_col = _pick(df, "company", ["company_name", "sponsor", "Sponsor"])
-                phase_col   = _pick(df, "phase",   ["phase", "clinical_phase", "development_stage_final"])
-                title_unit  = "trials"
-            else:
-                df = programs_df.copy()
-                company_col = _pick(df, "company", ["company_name"])
-                phase_col   = _pick(df, "phase",   ["development_stage_final"])
-                title_unit  = "programs"
+            df = programs_df.copy()
+            company_col = _pick(df, "company", ["company_name"])
+            phase_col   = _pick(df, "phase",   ["development_stage_final"])
+            title_unit  = "programs"
 
-            # clean
             df = df[[company_col, phase_col]].copy()
             df[company_col] = df[company_col].astype(str).str.strip()
             df[phase_col]   = df[phase_col].astype(str).str.strip()
@@ -776,11 +836,7 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
                     ordered=True
                 )
 
-            # normalize option
             value_col, y_label = ("count", "Count")
-            if normalize:
-                agg["percent"] = agg["count"] / agg.groupby(company_col)["count"].transform("sum") * 100
-                value_col, y_label = ("percent", "Share (%)")
 
             # stacked bar
             fig_bar = px.bar(
@@ -792,7 +848,7 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
             fig_bar.update_layout(**plotly_layout, barmode="stack", xaxis_title=None, legend_title="Phase", height=480)
             st.plotly_chart(fig_bar, use_container_width=True)
 
-            # heatmap (use Option 1 margin fix)
+            # heatmap
             pivot = agg.pivot_table(index=company_col, columns=phase_col, values=value_col, fill_value=0)
             pivot = pivot.reindex(index=top_companies)
             if phase_cats:
@@ -804,7 +860,6 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
                 title=f"{title_unit.capitalize()} by Phase per Company (Heatmap)",
                 aspect="auto"
             )
-            # remove conflicting key
             layout_no_margin = {k: v for k, v in plotly_layout.items() if k != 'margin'}
             fig_heat.update_layout(
                 **layout_no_margin,
@@ -821,7 +876,6 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
                     use_container_width=True
                 )
 
-        # ---------- VIEW B: Your original Cross-Dimensional Matrix ----------
         else:
             st.markdown("### Cross-Dimensional Analysis")
             col1, col2 = st.columns(2)
@@ -847,218 +901,166 @@ elif st.session_state.current_page == 'Compare' and st.session_state.data:
                 fig.update_layout(**plotly_layout, height=600)
                 st.plotly_chart(fig, use_container_width=True)
 
-
-    # ————————————————
-    # Tab 2: Direct Company Comparison (with full Program expanders + Trial lists)
+    # ----- Tab 2: Company Benchmarking -----
     with tab2:
-        st.markdown("### Direct Company Comparison")
-        company_names = companies_df['company_name'].unique().tolist()
+        st.markdown("### Company Benchmarking")
+        company_names = (
+            companies_df.get('company_name', pd.Series(dtype=str))
+            .dropna().astype(str).unique().tolist()
+        )
+        company_names = sorted(company_names)
 
-        col1, col2 = st.columns(2)
-        with col1:
-            company1 = st.selectbox("Company A", company_names, key='comp1')
-        with col2:
-            company2 = st.selectbox("Company B", company_names, key='comp2')
+        c0, c1 = st.columns([4, 2])
+        with c0:
+            selected = st.multiselect(
+                "Select companies (up to 6)",
+                options=company_names,
+                default=company_names[: min(2, len(company_names))]
+            )
+        with c1:
+            cols_per_row = st.slider("Columns", 2, 4, 3, step=1)
 
-        if st.button("Compare"):
-            # company summary and slices
-            comp1_data     = companies_df.query("company_name == @company1").iloc[0]
-            comp2_data     = companies_df.query("company_name == @company2").iloc[0]
-            comp1_programs = programs_df.query("company_name == @company1")
-            comp2_programs = programs_df.query("company_name == @company2")
-            comp1_trials   = trials_df.query("company_name == @company1")
-            comp2_trials   = trials_df.query("company_name == @company2")
+        if not selected:
+            st.stop()
+        if len(selected) > 6:
+            st.warning("Showing the first 6 selected companies.")
+            selected = selected[:6]
 
-            col1, col2 = st.columns(2)
-            # — Company A —
-            with col1:
-                st.markdown(f"## {company1.title()}")
-                st.markdown(f"**Type:** {safe_get(comp1_data, 'public_private')}")
-                st.markdown(f"**Founded:** {safe_get(comp1_data, 'founding_year')}")
-                st.markdown(f"**Total Funding:** {format_currency(comp1_data.get('total_funding_numeric', 0))}")
-                st.markdown(f"**Active Programs:** {len(comp1_programs)}")
-                st.markdown(f"**Focus Area:** {safe_get(comp1_data, 'company_focus')}")
+        def _ci_eq(series, val):
+            s = series.astype(str).str.strip().str.lower()
+            return s == str(val).strip().lower()
 
-                st.markdown("---")
-                st.markdown("### Programs")
-                for _, program in comp1_programs.iterrows():
-                    with st.expander(f"{program['program_name'].upper()} | {program['development_stage_final']}"):
-                        # Program Details
-                        st.markdown("#### Program Details")
-                        cA, cB = st.columns(2)
-                        with cA:
-                            st.markdown(f"**Program:** {program['program_name']}")
-                            st.markdown(f"**Classification:** {program['program_classification_final']}")
-                            st.markdown(f"**Target:** {program['target_primary']}")
-                        with cB:
-                            st.markdown(f"**Indication:** {program['indication_primary']}")
-                            st.markdown(f"**Delivery:** {program['platform_delivery_final']}")
-                            st.markdown(f"**Stage:** {program['development_stage_final']}")
+        def _year_str(x):
+            try:
+                xi = int(float(x))
+                return str(xi)
+            except Exception:
+                return "N/A"
 
-                        st.markdown("#### Scientific Rationale")
-                        st.markdown(f"**Biological Rationale:** {safe_get(program, 'biological_rationale_final')}")
-                        st.markdown(f"**Mechanism of Action:** {safe_get(program, 'mechanism_of_action_detailed_final')}")
+        def _money(x):
+            try:
+                return format_currency(float(x))
+            except Exception:
+                return "Undisclosed"
 
-                        # Clinical Trials for this program
-                        prog_trials = trials_df[trials_df['program_id'] == program['program_id']]
-                        if not prog_trials.empty:
-                            st.markdown("#### Clinical Development")
-                            for _, trial in prog_trials.iterrows():
-                                st.markdown(
-                                    f"- **{trial_links(trial.get('trial_id'))}**: "
-                                    f"{safe_get(trial, 'phase')} – {safe_get(trial, 'status')}"
-                                )
-                        st.markdown(f"**Milestones:** {safe_get(program, 'timeline_milestones')}")
+        prog_cols = [c for c in [
+            'program_name','development_stage_final','indication_primary',
+            'program_classification_final','modality_final',
+            'platform_delivery_final','target_primary'
+        ] if c in programs_df.columns]
 
-                        st.markdown("#### Additional Information")
-                        st.markdown(f"**Key Publications:** {safe_get(program, 'key_scientific_paper')}")
-                        st.markdown(f"**Data Quality Index:** {safe_get(program, 'data_quality_index')}")
-                        st.markdown(f"**Research Notes:** {safe_get(program, 'research_notes')}")
+        trial_cols = [c for c in [
+            'trial_id','phase','status','indication','enrollment_target','program_name','nct_id'
+        ] if c in trials_df_norm.columns]
 
-                        red_flags = safe_get(program, 'red_flags')
-                        if red_flags != 'N/A':
-                            st.warning(f"**Risk Factors:** {red_flags}")
+        def company_card(name: str):
+            c = companies_df[_ci_eq(companies_df['company_name'], name)]
+            cdict = c.iloc[0].to_dict() if not c.empty else {}
 
-                st.markdown("### Clinical Trials")
-                if not comp1_trials.empty:
-                    for _, trial in comp1_trials.iterrows():
-                        st.markdown(
-                            f"- **{trial_links(trial.get('trial_id'))}** | "
-                            f"{safe_get(trial, 'phase')} • {safe_get(trial, 'status')} • "
-                            f"{safe_get(trial, 'indication')} • "
-                            f"Enroll: {safe_get(trial, 'enrollment_target')}"
-                        )
+            progs  = programs_df[_ci_eq(programs_df['company_name'], name)] if not programs_df.empty else pd.DataFrame()
+            trials = trials_df_norm[_ci_eq(trials_df_norm['company_name'], name)] if not trials_df_norm.empty else pd.DataFrame()
+
+            # Header
+            title = str(name).title()
+            if len(title) > 48:
+                title = title[:45] + "…"
+            st.markdown(f"## {title}")
+
+            with st.expander("Key Metrics", expanded=False):
+                st.markdown(f"**Type:** {safe_get(cdict, 'public_private')}")
+                st.markdown(f"**Founded:** {_year_str(cdict.get('founding_year'))}")
+                st.markdown(f"**Total Funding:** {_money(cdict.get('total_funding_numeric'))}")
+                st.markdown(f"**Active Programs:** {int(progs.shape[0])}")
+
+            with st.expander("Company Details", expanded=False):
+                st.markdown(f"**Country:** {safe_get(cdict, 'country_normalized')}")
+                st.markdown(f"**HQ City:** {safe_get(cdict, 'city_normalized')}")
+                st.markdown(f"**Website:** {safe_get(cdict, 'website')}")
+                st.markdown(f"**Size:** {safe_get(cdict, 'size_category')}")
+                st.markdown(f"**Primary Focus:** {safe_get(cdict, 'company_focus')}")
+                st.markdown(f"**Leadership:** {safe_get(cdict, 'leadership')}")
+
+            with st.expander("Programs", expanded=False):
+                if progs.empty:
+                    st.info("No programs found.")
                 else:
-                    st.info("No trials found")
+                    view = progs[prog_cols] if prog_cols else progs
+                    st.dataframe(view, use_container_width=True, hide_index=True)
 
-            # — Company B —
-            with col2:
-                st.markdown(f"## {company2.title()}")
-                st.markdown(f"**Type:** {safe_get(comp2_data, 'public_private')}")
-                st.markdown(f"**Founded:** {safe_get(comp2_data, 'founding_year')}")
-                st.markdown(f"**Total Funding:** {format_currency(comp2_data.get('total_funding_numeric', 0))}")
-                st.markdown(f"**Active Programs:** {len(comp2_programs)}")
-                st.markdown(f"**Focus Area:** {safe_get(comp2_data, 'company_focus')}")
-
-                st.markdown("---")
-                st.markdown("### Programs")
-                for _, program in comp2_programs.iterrows():
-                    with st.expander(f"{program['program_name'].upper()} | {program['development_stage_final']}"):
-                        # repeat the same detail block as above
-                        st.markdown("#### Program Details")
-                        cA, cB = st.columns(2)
-                        with cA:
-                            st.markdown(f"**Program:** {program['program_name']}")
-                            st.markdown(f"**Classification:** {program['program_classification_final']}")
-                            st.markdown(f"**Target:** {program['target_primary']}")
-                        with cB:
-                            st.markdown(f"**Indication:** {program['indication_primary']}")
-                            st.markdown(f"**Delivery:** {program['platform_delivery_final']}")
-                            st.markdown(f"**Stage:** {program['development_stage_final']}")
-
-                        st.markdown("#### Scientific Rationale")
-                        st.markdown(f"**Biological Rationale:** {safe_get(program, 'biological_rationale_final')}")
-                        st.markdown(f"**Mechanism of Action:** {safe_get(program, 'mechanism_of_action_detailed_final')}")
-
-                        prog_trials = trials_df[trials_df['program_id'] == program['program_id']]
-                        if not prog_trials.empty:
-                            st.markdown("#### Clinical Development")
-                            for _, trial in prog_trials.iterrows():
-                                st.markdown(
-                                    f"- **{trial_links(trial.get('trial_id'))}**: "
-                                    f"{safe_get(trial, 'phase')} – {safe_get(trial, 'status')}"
-                                )
-                        
-                        st.markdown(f"**Milestones:** {safe_get(program, 'timeline_milestones')}")
-
-                        st.markdown("#### Additional Information")
-                        st.markdown(f"**Key Publications:** {safe_get(program, 'key_scientific_paper')}")
-                        st.markdown(f"**Data Quality Index:** {safe_get(program, 'data_quality_index')}")
-                        st.markdown(f"**Research Notes:** {safe_get(program, 'research_notes')}")
-
-                        red_flags = safe_get(program, 'red_flags')
-                        if red_flags != 'N/A':
-                            st.warning(f"**Risk Factors:** {red_flags}")
-
-                st.markdown("### Clinical Trials")
-                if not comp2_trials.empty:
-                    for _, trial in comp2_trials.iterrows():
-                        st.markdown(
-                            f"- **{trial_links(trial.get('trial_id'))}** | "
-                            f"{safe_get(trial, 'phase')} • {safe_get(trial, 'status')} • "
-                            f"{safe_get(trial, 'indication')} • "
-                            f"Enroll: {safe_get(trial, 'enrollment_target')}"
-                        )
+            with st.expander("Clinical Trials", expanded=False):
+                if trials.empty:
+                    st.info("No trials found.")
                 else:
-                    st.info("No trials found")
+                    view = trials.drop_duplicates(subset=['trial_key'])
+                    if trial_cols:
+                        view = view[trial_cols].copy()
+                    st.dataframe(view, use_container_width=True, hide_index=True)
 
+            with st.expander("Notes", expanded=False):
+                st.markdown(f"**Research Notes:** {safe_get(cdict, 'research_notes')}")
 
+        # Grid layout
+        for start in range(0, len(selected), cols_per_row):
+            row = selected[start:start + cols_per_row]
+            cols = st.columns(len(row))
+            for i, cname in enumerate(row):
+                with cols[i]:
+                    company_card(cname)
 
-
-
-
-
-
+# =========================================================
+# CLUSTER ANALYSIS
+# =========================================================
 elif st.session_state.current_page == 'Cluster Analysis' and st.session_state.data:
     data = st.session_state.data
     programs_df = pd.DataFrame(data.get('programs', []))
-    companies_df = pd.DataFrame(data.get('companies', []))
-    
+
     st.title("Competitive Landscape Network")
-    
+
     if programs_df.empty:
         st.warning("No program data available")
     else:
-        # Network configuration
         col1, col2, col3 = st.columns([2, 2, 1])
-        
+
         with col1:
             primary_dimension = st.selectbox(
                 "Analysis dimension",
                 ["Indication Group", "Target Family"]
             )
-        
+
         with col2:
             if primary_dimension == "Indication Group":
                 if 'indication_group' in programs_df.columns:
                     segment_counts = programs_df['indication_group'].value_counts()
-                    segment_options = [f"{seg} ({count})" for seg, count in segment_counts.items() 
-                                     if str(seg) != 'nan' and count >= 3]
                 else:
                     segment_counts = programs_df['indication_group'].value_counts()
-                    segment_options = [f"{seg} ({count})" for seg, count in segment_counts.items() 
-                                     if str(seg) != 'nan' and count >= 3]
-                
+                segment_options = [f"{seg} ({count})" for seg, count in segment_counts.items()
+                                   if str(seg) != 'nan' and count >= 3]
                 if segment_options:
                     selected_segment = st.selectbox("Select indication", segment_options)
                     selected_segment = selected_segment.split(' (')[0] if selected_segment else None
                 else:
                     st.warning("Insufficient data for network analysis")
                     selected_segment = None
-                    
             else:
                 if 'target_family_final' in programs_df.columns:
                     segment_counts = programs_df['target_family_final'].value_counts()
-                    segment_options = [f"{seg} ({count})" for seg, count in segment_counts.items() 
-                                     if str(seg) != 'nan' and count >= 3]
                 else:
                     segment_counts = programs_df['target_primary'].value_counts()
-                    segment_options = [f"{seg} ({count})" for seg, count in segment_counts.items() 
-                                     if str(seg) != 'nan' and count >= 3]
-                
+                segment_options = [f"{seg} ({count})" for seg, count in segment_counts.items()
+                                   if str(seg) != 'nan' and count >= 3]
                 if segment_options:
                     selected_segment = st.selectbox("Select target", segment_options)
                     selected_segment = selected_segment.split(' (')[0] if selected_segment else None
                 else:
                     st.warning("Insufficient data for network analysis")
                     selected_segment = None
-        
+
         with col3:
             network_view = st.selectbox(
                 "View type",
                 ["Modality", "Platform", "Combined"]
             )
-        
+
         if selected_segment:
             # Filter programs
             if primary_dimension == "Indication Group":
@@ -1071,113 +1073,93 @@ elif st.session_state.current_page == 'Cluster Analysis' and st.session_state.da
                     segment_programs = programs_df[programs_df['target_family_final'] == selected_segment]
                 else:
                     segment_programs = programs_df[programs_df['target_primary'] == selected_segment]
-            
+
             # Build network
             G = nx.Graph()
             company_info = {}
             approach_nodes = set()
             company_nodes = set()
-            
-            # Node colors for dark theme with better contrast
+
             node_colors = {
-                'Small molecule': plotly_layout['colorway'][0],   # '#4C78A8'
-                'Antibody':        plotly_layout['colorway'][1],   # '#54A24B'
-                'Cell therapy':    plotly_layout['colorway'][2],   # '#E45756'
-                'Gene therapy':    plotly_layout['colorway'][3],   # '#79C36A'
-                'RNA':             plotly_layout['colorway'][4],   # '#72B7B2'
-                'Protein':         plotly_layout['colorway'][5],   # '#EECA3B'
-                'Other':           plotly_layout['colorway'][6],   # '#9B5DE5'
+                'Small molecule': plotly_layout['colorway'][0],
+                'Antibody':        plotly_layout['colorway'][1],
+                'Cell therapy':    plotly_layout['colorway'][2],
+                'Gene therapy':    plotly_layout['colorway'][3],
+                'RNA':             plotly_layout['colorway'][4],
+                'Protein':         plotly_layout['colorway'][5],
+                'Other':           plotly_layout['colorway'][6],
             }
 
             if network_view == "Modality":
                 for _, program in segment_programs.iterrows():
                     company = program['company_name']
                     modality = program['modality_final']
-                    
                     if pd.notna(company) and pd.notna(modality):
                         if company not in company_nodes:
                             G.add_node(company, node_type='company', bipartite=0)
                             company_nodes.add(company)
-                            
                             company_progs = segment_programs[segment_programs['company_name'] == company]
                             company_info[company] = {
                                 'program_count': len(company_progs),
                                 'modalities': company_progs['modality_final'].unique().tolist()
                             }
-                        
                         if modality not in approach_nodes:
                             G.add_node(modality, node_type='modality', bipartite=1)
                             approach_nodes.add(modality)
-                        
                         if G.has_edge(company, modality):
                             G[company][modality]['weight'] += 1
                         else:
                             G.add_edge(company, modality, weight=1)
-            
+
             elif network_view == "Platform":
                 for _, program in segment_programs.iterrows():
                     company = program['company_name']
                     platform = program['platform_delivery_final']
-                    
                     if pd.notna(company) and pd.notna(platform):
                         if company not in company_nodes:
                             G.add_node(company, node_type='company', bipartite=0)
                             company_nodes.add(company)
-                            
                             company_progs = segment_programs[segment_programs['company_name'] == company]
                             company_info[company] = {
                                 'program_count': len(company_progs),
                                 'platforms': company_progs['platform_delivery_final'].unique().tolist()
                             }
-                        
                         if platform not in approach_nodes:
                             G.add_node(platform, node_type='platform', bipartite=1)
                             approach_nodes.add(platform)
-                        
                         if G.has_edge(company, platform):
                             G[company][platform]['weight'] += 1
                         else:
                             G.add_edge(company, platform, weight=1)
-            
+
             else:  # Combined
                 for _, program in segment_programs.iterrows():
                     company = program['company_name']
                     modality = program['modality_final']
                     platform = program['platform_delivery_final']
-                    
                     if pd.notna(company) and pd.notna(modality) and pd.notna(platform):
                         approach = f"{modality} / {platform}"
-                        
                         if company not in company_nodes:
                             G.add_node(company, node_type='company', bipartite=0)
                             company_nodes.add(company)
-                            
                             company_progs = segment_programs[segment_programs['company_name'] == company]
-                            company_info[company] = {
-                                'program_count': len(company_progs)
-                            }
-                        
+                            company_info[company] = {'program_count': len(company_progs)}
                         if approach not in approach_nodes:
                             G.add_node(approach, node_type='approach', bipartite=1)
                             approach_nodes.add(approach)
-                        
                         if G.has_edge(company, approach):
                             G[company][approach]['weight'] += 1
                         else:
                             G.add_edge(company, approach, weight=1)
-            
+
             if len(G.nodes()) > 0:
-                # Layout
                 pos = nx.spring_layout(G, k=1.0, iterations=50, seed=42)
-                
-                # Create edge traces
                 edge_traces = []
                 for edge in G.edges(data=True):
                     if edge[0] in pos and edge[1] in pos:
                         x0, y0 = pos[edge[0]]
                         x1, y1 = pos[edge[1]]
                         weight = edge[2].get('weight', 1)
-                        
                         edge_trace = go.Scatter(
                             x=[x0, x1, None],
                             y=[y0, y1, None],
@@ -1188,13 +1170,9 @@ elif st.session_state.current_page == 'Cluster Analysis' and st.session_state.da
                             showlegend=False
                         )
                         edge_traces.append(edge_trace)
-                
+
                 # Company nodes
-                company_x = []
-                company_y = []
-                company_text = []
-                company_sizes = []
-                
+                company_x, company_y, company_text, company_sizes = [], [], [], []
                 for node in company_nodes:
                     if node in pos:
                         company_x.append(pos[node][0])
@@ -1202,7 +1180,7 @@ elif st.session_state.current_page == 'Cluster Analysis' and st.session_state.da
                         company_text.append(node[:20])
                         info = company_info.get(node, {})
                         company_sizes.append(20 + info.get('program_count', 1) * 4)
-                
+
                 company_trace = go.Scatter(
                     x=company_x,
                     y=company_y,
@@ -1219,28 +1197,15 @@ elif st.session_state.current_page == 'Cluster Analysis' and st.session_state.da
                     hoverinfo='text',
                     hovertext=company_text
                 )
-                
+
                 # Approach nodes
-                approach_x = []
-                approach_y = []
-                approach_text = []
-                approach_colors = []
-                approach_sizes = []
-                
+                approach_x, approach_y, approach_text = [], [], []
                 for node in approach_nodes:
                     if node in pos:
                         approach_x.append(pos[node][0])
                         approach_y.append(pos[node][1])
                         approach_text.append(node[:20])
-                        
-                        connected = list(G.neighbors(node))
-                        approach_sizes.append(25 + len(connected) * 3)
-                        
-                        if network_view == "Modality":
-                            approach_colors.append(node_colors.get(node, '#6b7280'))
-                        else:
-                            approach_colors.append('#fb923c')
-                
+
                 approach_trace = go.Scatter(
                     x=approach_x,
                     y=approach_y,
@@ -1249,7 +1214,7 @@ elif st.session_state.current_page == 'Cluster Analysis' and st.session_state.da
                     textposition="bottom center",
                     textfont=dict(size=11, color=plotly_layout['font']['color']),
                     marker=dict(
-                        size=approach_sizes,
+                        size=[25 + len(list(G.neighbors(n))) * 3 for n in approach_nodes],
                         color=[ node_colors.get(n, plotly_layout['colorway'][7]) for n in approach_nodes ],
                         symbol='diamond',
                         line=dict(width=2, color='#FFFFFF')
@@ -1258,8 +1223,7 @@ elif st.session_state.current_page == 'Cluster Analysis' and st.session_state.da
                     hoverinfo='text',
                     hovertext=approach_text
                 )
-                            
-                # Create figure
+
                 fig = go.Figure(
                     data=edge_traces + [company_trace, approach_trace],
                     layout=go.Layout(
@@ -1276,18 +1240,13 @@ elif st.session_state.current_page == 'Cluster Analysis' and st.session_state.da
                         dragmode='pan'
                     )
                 )
-                            
                 st.plotly_chart(fig, use_container_width=True)
-                
-                # Metrics
+
                 col1, col2, col3 = st.columns(3)
-                
                 with col1:
                     st.metric("Companies", len(company_nodes))
-                
                 with col2:
                     st.metric("Unique Approaches", len(approach_nodes))
-                
                 with col3:
                     st.metric("Total Programs", len(segment_programs))
             else:
@@ -1295,7 +1254,9 @@ elif st.session_state.current_page == 'Cluster Analysis' and st.session_state.da
         else:
             st.info("Select an indication or target to analyze the competitive landscape")
 
-
+# =========================================================
+# FALLBACK
+# =========================================================
 else:
     if st.session_state.current_page != 'Overview':
         st.warning("Please upload a dataset from the Overview page")
