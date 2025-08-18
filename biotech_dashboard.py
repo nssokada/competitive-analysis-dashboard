@@ -366,6 +366,326 @@ def render_publications_for_program(program_row, pubs_df: pd.DataFrame):
                 st.markdown(f"- {title}{(' — ' + tail) if tail else ''}")
     return True
 
+# --- Company extras: loading + rendering -----------------
+
+def load_company_infos_blob(data: dict, extra_dir: str = None) -> dict:
+    """
+    Returns {company_id: info_dict}. 
+    Sources:
+      1) Top-level keys in the uploaded data: 'company_infos' or variants
+      2) Optional local directory of JSON files named COMP_XXXX.json
+    """
+    infos = {}
+
+    # 1) From the uploaded master JSON (prefer dict keyed by company_id)
+    for key in ["company_infos", "company_info", "companies_extra", "companies_info"]:
+        if key in data and data[key]:
+            raw = data[key]
+            if isinstance(raw, dict):
+                for cid, obj in raw.items():
+                    infos[str(cid)] = obj
+            elif isinstance(raw, list):
+                for obj in raw:
+                    cid = str(obj.get("company_id") or obj.get("id") or "")
+                    if cid:
+                        infos[cid] = obj
+
+    # 2) Optional local directory read (when running locally)
+    if extra_dir:
+        try:
+            import os, glob, json as _json
+            for p in glob.glob(os.path.join(extra_dir, "*.json")):
+                with open(p, "r") as f:
+                    obj = _json.load(f)
+                cid = str(obj.get("company_id") or os.path.splitext(os.path.basename(p))[0])
+                infos[cid] = obj
+        except Exception:
+            pass
+
+    return infos
+
+
+def _fmt_money(x):
+    try:
+        x = float(x)
+        if x <= 0 or pd.isna(x):
+            return "Undisclosed"
+        return f"${x/1e6:.1f}M"
+    except Exception:
+        return "Undisclosed"
+
+def render_company_extras_for_company(comp_row: dict, all_infos: dict) -> bool:
+    """
+    Renders funding / investors / partnerships / M&A / news / flags for a company.
+    Supports both legacy schema (top-level funding/partnerships/ma/news) and
+    the new schema where extras live under company_infos[*].info as a list of events.
+    Adds clickable source URLs under each section.
+    """
+    import urllib.parse as _urlparse
+
+    if not all_infos:
+        return False
+
+    cid  = str(comp_row.get("company_id", "")).strip()
+    name = str(comp_row.get("company_name", "")).strip()
+
+    # --- Locate the extras record: prefer id; fallback to normalized name
+    info_rec = all_infos.get(cid)
+    if not info_rec:
+        nm_norm = _norm_str(name)
+        for obj in all_infos.values():
+            if _norm_str(obj.get("company_name")) == nm_norm:
+                info_rec = obj
+                break
+    if not info_rec:
+        return False
+
+    # ---------- Helpers ----------
+    def _fmt_money(x):
+        try:
+            x = float(x)
+            if not np.isfinite(x) or x <= 0:
+                return "Undisclosed"
+            return f"${x/1e6:.1f}M"
+        except Exception:
+            return "Undisclosed"
+
+    def _domain(url):
+        try:
+            netloc = _urlparse.urlparse(str(url)).netloc
+            return netloc.replace("www.", "") if netloc else "link"
+        except Exception:
+            return "link"
+
+    def _links_md(sources, max_links=6):
+        """Return markdown like: [businesswire.com](url) • [fda.gov](url2) ..."""
+        if not isinstance(sources, list) or not sources:
+            return ""
+        out = []
+        for s in sources[:max_links]:
+            url = s.get("url") or s.get("link")
+            if not url:
+                continue
+            label = s.get("source_type") or _domain(url)
+            out.append(f"[{label}]({url})")
+        return " • ".join(out)
+
+    rendered_any = False
+
+    # ========== PATH A: Legacy top-level fields ==========
+    if any(k in info_rec for k in ("funding_events", "funding", "partnerships", "relationships", "ma", "mna", "transactions", "news", "red_flags", "yellow_flags")):
+        # ---- Funding
+        funding = info_rec.get("funding_events") or info_rec.get("funding") or []
+        if isinstance(funding, list) and funding:
+            st.markdown("#### Funding history")
+            dff = pd.DataFrame(funding)
+            if "amount_usd" in dff.columns:
+                dff["amount"] = dff["amount_usd"].apply(_fmt_money)
+            show_cols = [c for c in ["date", "round", "amount", "investors", "notes"] if c in dff.columns or c == "amount"]
+            st.dataframe(dff[show_cols] if show_cols else dff, use_container_width=True, hide_index=True)
+
+            # Sources per row
+            if "sources" in dff.columns:
+                with st.expander("Show sources (funding)"):
+                    for _, r in dff.iterrows():
+                        md = _links_md(r.get("sources", []))
+                        if md:
+                            st.markdown(f"- **{r.get('date','')} {r.get('round','')}** — {md}")
+            rendered_any = True
+
+        # ---- Investors (chips)
+        investors = parse_listish(info_rec.get("investors"))
+        if not investors and isinstance(funding, list) and funding:
+            investors = unique_preserve([i for row in funding for i in parse_listish(row.get("investors"))])
+        if investors:
+            st.markdown("**Notable investors**")
+            chips = " ".join(
+                f"<span style='background:#2d3340;border:1px solid #444;color:#fff;padding:2px 8px;border-radius:12px;margin-right:6px;font-size:0.85rem;'>{i}</span>"
+                for i in investors
+            )
+            st.markdown(chips, unsafe_allow_html=True)
+            rendered_any = True
+
+        # ---- Partnerships
+        parts = info_rec.get("partnerships") or info_rec.get("relationships") or []
+        if isinstance(parts, list) and parts:
+            st.markdown("#### Partnerships & Licensing")
+            dfp = pd.DataFrame(parts)
+            if "value_usd" in dfp.columns:
+                dfp["value"] = dfp["value_usd"].apply(_fmt_money)
+            show_cols = [c for c in ["partner", "type", "program", "announced", "status", "value", "notes"]
+                         if c in dfp.columns or c == "value"]
+            st.dataframe(dfp[show_cols] if show_cols else dfp, use_container_width=True, hide_index=True)
+            if "sources" in dfp.columns:
+                with st.expander("Show sources (partnerships)"):
+                    for _, r in dfp.iterrows():
+                        md = _links_md(r.get("sources", []))
+                        if md:
+                            st.markdown(f"- **{r.get('announced','')} – {r.get('partner','')}** — {md}")
+            rendered_any = True
+
+        # ---- M&A
+        ma = info_rec.get("ma") or info_rec.get("mna") or info_rec.get("transactions") or []
+        if isinstance(ma, list) and ma:
+            st.markdown("#### M&A / Transactions")
+            dfm = pd.DataFrame(ma)
+            if "value_usd" in dfm.columns:
+                dfm["value"] = dfm["value_usd"].apply(_fmt_money)
+            show_cols = [c for c in ["role", "counterparty", "announced", "closed", "value", "structure", "notes"]
+                         if c in dfm.columns or c == "value"]
+            st.dataframe(dfm[show_cols] if show_cols else dfm, use_container_width=True, hide_index=True)
+            if "sources" in dfm.columns:
+                with st.expander("Show sources (M&A)"):
+                    for _, r in dfm.iterrows():
+                        md = _links_md(r.get("sources", []))
+                        if md:
+                            st.markdown(f"- **{r.get('announced','')} – {r.get('counterparty','')}** — {md}")
+            rendered_any = True
+
+        # ---- News
+        news = info_rec.get("news") or []
+        if isinstance(news, list) and news:
+            st.markdown("#### Recent news")
+            try:
+                news_sorted = sorted(news, key=lambda x: str(x.get("date", "")), reverse=True)
+            except Exception:
+                news_sorted = news
+            for item in news_sorted[:6]:
+                title = str(item.get("title", "Untitled")).strip()
+                src   = str(item.get("source", "")).strip()
+                date  = str(item.get("date", "")).strip()
+                url   = item.get("url")
+                st.markdown(f"- [{title}]({url}) — {src}, {date}" if url else f"- {title} — {src}, {date}")
+            rendered_any = True
+
+        # ---- Flags
+        flags = parse_listish(info_rec.get("red_flags")) + parse_listish(info_rec.get("yellow_flags"))
+        if flags:
+            st.warning("**Risks / flags:** " + "; ".join(flags))
+            rendered_any = True
+
+        return rendered_any
+
+    # ========== PATH B: New list-of-events schema at info_rec['info'] ==========
+    items = info_rec.get("info")
+    if not isinstance(items, list) or not items:
+        return False
+
+    ev = pd.DataFrame(items)
+
+    # Normalize dates/amounts
+    ev["__date"] = None
+    for col in ["announced_date", "date"]:
+        if col in ev.columns:
+            ev["__date"] = ev["__date"].fillna(ev[col])
+    ev["__amount_usd"] = None
+    for col in ["disclosed_value_usd", "value_usd", "amount_usd", "deal_value_usd"]:
+        if col in ev.columns:
+            ev["__amount_usd"] = ev["__amount_usd"].fillna(ev[col])
+
+    # ---------- Funding (vc_investment) ----------
+    fund_mask = ev.get("relation_type", pd.Series([], dtype=str)).astype(str).str.lower().eq("vc_investment")
+    funding_df = ev[fund_mask].copy()
+    if not funding_df.empty:
+        st.markdown("#### Funding history")
+        # Aggregate by date+round to combine multiple investors & sources
+        g = (funding_df
+             .assign(investor=funding_df.get("counterparty", ""), srcs=funding_df.get("sources", None))
+             .groupby([funding_df["__date"].astype(str),
+                       funding_df.get("round", pd.Series("", index=funding_df.index)).astype(str)],
+                      dropna=False)
+             .agg(amount_usd=("__amount_usd", "first"),
+                  investors=("investor", lambda s: ", ".join(unique_preserve([x for x in s if str(x).strip()]))),
+                  _sources=("srcs", lambda s: [x for row in s for x in (row or [])]))
+             .reset_index())
+        g.columns = ["date", "round", "amount_usd", "investors", "_sources"]
+        g["amount"] = g["amount_usd"].apply(_fmt_money)
+        g["sources_md"] = g["_sources"].apply(_links_md)
+
+        show_cols = [c for c in ["date", "round", "amount", "investors"] if c in g.columns]
+        st.dataframe(g[show_cols], use_container_width=True, hide_index=True)
+
+        # Clickable sources per row
+        with st.expander("Show sources (funding)"):
+            for _, r in g.iterrows():
+                if r["sources_md"]:
+                    st.markdown(f"- **{r['date']} {r['round']}** — {r['sources_md']}")
+
+        # Investors chips
+        invs = unique_preserve([str(x) for x in funding_df.get("counterparty", pd.Series([])).dropna().astype(str).tolist()])
+        if invs:
+            st.markdown("**Notable investors**")
+            chips = " ".join(
+                f"<span style='background:#2d3340;border:1px solid #444;color:#fff;padding:2px 8px;border-radius:12px;margin-right:6px;font-size:0.85rem;'>{i}</span>"
+                for i in invs
+            )
+            st.markdown(chips, unsafe_allow_html=True)
+
+        rendered_any = True
+
+    # ---------- Partnerships ----------
+    part_mask = ev.get("relation_type", pd.Series([], dtype=str)).astype(str).str.lower().eq("partnership")
+    parts_df = ev[part_mask].copy()
+    if not parts_df.empty:
+        st.markdown("#### Partnerships & Licensing")
+        out = pd.DataFrame({
+            "partner": parts_df.get("counterparty", pd.Series("", index=parts_df.index)),
+            "type": parts_df.get("deal_type", pd.Series("", index=parts_df.index)),
+            "program": parts_df.get("focus_target", pd.Series("", index=parts_df.index)),
+            "announced": parts_df["__date"].astype(str),
+            "status": parts_df.get("status", pd.Series("", index=parts_df.index)),
+            "value_usd": parts_df["__amount_usd"],
+            "notes": parts_df.get("value_notes", pd.Series("", index=parts_df.index)),
+        })
+        out["value"] = out["value_usd"].apply(_fmt_money)
+        st.dataframe(out[["partner", "type", "program", "announced", "status", "value", "notes"]],
+                     use_container_width=True, hide_index=True)
+
+        # Sources expander
+        srcs = parts_df.get("sources", None)
+        if srcs is not None:
+            with st.expander("Show sources (partnerships)"):
+                for _, r in parts_df.iterrows():
+                    md = _links_md(r.get("sources", []))
+                    if md:
+                        partner = r.get("counterparty", "")
+                        date = str(r.get("__date", ""))
+                        st.markdown(f"- **{date} – {partner}** — {md}")
+
+        rendered_any = True
+
+    # ---------- M&A / Transactions ----------
+    ma_mask = ev.get("relation_type", pd.Series([], dtype=str)).astype(str).str.lower().isin(["acquisition", "mna", "merger"])
+    ma_df = ev[ma_mask].copy()
+    if not ma_df.empty:
+        st.markdown("#### M&A / Transactions")
+        out = pd.DataFrame({
+            "counterparty": ma_df.get("counterparty", pd.Series("", index=ma_df.index)),
+            "announced": ma_df["__date"].astype(str),
+            "status": ma_df.get("status", pd.Series("", index=ma_df.index)),
+            "value_usd": ma_df["__amount_usd"],
+            "notes": ma_df.get("value_notes", pd.Series("", index=ma_df.index)),
+        })
+        out["value"] = out["value_usd"].apply(_fmt_money)
+        st.dataframe(out[["counterparty", "announced", "status", "value", "notes"]],
+                     use_container_width=True, hide_index=True)
+
+        # Sources expander
+        srcs = ma_df.get("sources", None)
+        if srcs is not None:
+            with st.expander("Show sources (M&A)"):
+                for _, r in ma_df.iterrows():
+                    md = _links_md(r.get("sources", []))
+                    if md:
+                        cpty = r.get("counterparty", "")
+                        date = str(r.get("__date", ""))
+                        st.markdown(f"- **{date} – {cpty}** — {md}")
+
+        rendered_any = True
+
+    return rendered_any
+
+
 
 # -------------------------------
 # Plotly theme
@@ -459,6 +779,7 @@ if st.session_state.current_page == 'Overview':
     trials_df_raw = pd.DataFrame(data.get('trials', []))
     trials_df_norm = st.session_state.trials_df_norm if not st.session_state.trials_df_norm.empty else normalize_trials(trials_df_raw)
     partnerships  = pd.DataFrame(data.get('partnerships', []))
+    st.session_state.company_infos = load_company_infos_blob(data)
 
     if programs_df.empty:
         st.warning("No program data found.")
@@ -759,15 +1080,23 @@ elif st.session_state.current_page == 'Programs' and st.session_state.data:
 # =========================================================
 # COMPANIES
 # =========================================================
+# =========================================================
+# COMPANIES
+# =========================================================
 elif st.session_state.current_page == 'Companies' and st.session_state.data:
     data = st.session_state.data
+
+    # Ensure company extras are loaded even if user didn't pass through Overview this run
+    if 'company_infos' not in st.session_state or not st.session_state.company_infos:
+        st.session_state.company_infos = load_company_infos_blob(data or {})
+
     companies_df = pd.DataFrame(data.get('companies', []))
     programs_df  = pd.DataFrame(data.get('programs',  []))
-    pubs_df = st.session_state.get("publications_df", pd.DataFrame())
-
+    pubs_df      = st.session_state.get("publications_df", pd.DataFrame())
     trials_df_norm = st.session_state.trials_df_norm
 
     st.title("Companies")
+    st.caption(f"Loaded extras for {len(st.session_state.get('company_infos', {}))} companies")
 
     if companies_df.empty:
         st.info("No company data available.")
@@ -872,8 +1201,11 @@ elif st.session_state.current_page == 'Companies' and st.session_state.data:
 
                             st.markdown("**Biological Rationale:** " + safe_get(program, 'biological_rationale_final'))
                             st.markdown("**Mechanism of Action:** " + safe_get(program, 'mechanism_of_action_detailed_final'))
-                            _  = render_publications_for_program(program, pubs_df)
 
+                            # Publications for this program
+                            _ = render_publications_for_program(program, pubs_df)
+
+                            # Clinical trials for this program (normalized & de-duped)
                             prog_trials = pd.DataFrame()
                             if not trials_df_norm.empty:
                                 prog_trials = trials_df_norm[trials_df_norm['program_id'] == program['program_id']]
@@ -902,6 +1234,12 @@ elif st.session_state.current_page == 'Companies' and st.session_state.data:
                 st.markdown(f"**Leadership:** {safe_get(comp, 'leadership')}")
                 st.markdown(f"**Website:** {safe_get(comp, 'website')}")
                 st.markdown(f"**Research Notes:** {safe_get(comp, 'research_notes')}")
+
+                # --- Company Intelligence (funding, partnerships, investors, M&A, news, flags)
+                extras_shown = render_company_extras_for_company(comp.to_dict(), st.session_state.get("company_infos", {}))
+                if not extras_shown and bool(comp.get("has_company_info", False)):
+                    st.info("Additional company intelligence is available in your dataset but not yet loaded. "
+                            "Ensure a top-level 'company_infos' is present in the uploaded JSON or provide a local extras directory.")
 
 # =========================================================
 # CLINICAL TRIALS
