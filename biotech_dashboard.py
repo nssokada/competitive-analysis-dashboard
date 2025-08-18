@@ -70,6 +70,61 @@ def format_currency(value):
         return "Undisclosed"
     return f"${value/1e6:.1f}M"
 
+def parse_listish(raw):
+    """
+    Turn messy multi-value fields into a clean Python list.
+    Accepts real lists, tuples, or strings like "['a','b']".
+    Returns [] if nothing usable.
+    """
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return []
+    if isinstance(raw, (list, tuple)):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    s = str(raw).strip()
+    if not s:
+        return []
+    # try to literal_eval "[...]" shapes
+    if (s.startswith("[") and s.endswith("]")) or (s.startswith("(") and s.endswith(")")):
+        try:
+            parsed = ast.literal_eval(s)
+            if isinstance(parsed, (list, tuple)):
+                return [str(x).strip() for x in parsed if str(x).strip()]
+        except Exception:
+            pass
+    # fallback: split on common delimiters
+    parts = re.split(r"[|;/]+", s)
+    return [p.strip() for p in parts if p.strip()]
+
+def unique_preserve(seq):
+    seen = set()
+    out = []
+    for x in seq:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+# Optional: rank phases so we can pick a canonical "highest" when needed
+_PHASE_RANK = {
+    "Preclinical": 0,
+    "Phase 1": 1,
+    "Phase 1/2": 2,
+    "Phase 2": 3,
+    "Phase 2/3": 4,
+    "Phase 3": 5,
+    "Filed": 6,
+    "Approved": 7
+}
+def canonical_phase(ph_list):
+    if not ph_list:
+        return ""
+    # keep unique, pick the highest phase for a single-value summary if desired
+    ph_uniq = unique_preserve(ph_list)
+    ph_sorted = sorted(ph_uniq, key=lambda p: _PHASE_RANK.get(p, -1))
+    # pretty multi-value string for display
+    return " / ".join(ph_sorted)
+
+
 def parse_nct_ids(raw):
     """Return a de-duplicated, order‐preserving list of NCT IDs from messy inputs."""
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
@@ -197,7 +252,120 @@ def normalize_trials(trials_df: pd.DataFrame) -> pd.DataFrame:
         df['trial_key']
     )
 
+        # --- Clean multi-value fields for display & filters ---
+    # Phase
+    if 'phase' in df.columns:
+        df['phase_list'] = df['phase'].apply(parse_listish)
+        df['phase_clean'] = df['phase_list'].apply(canonical_phase)
+    else:
+        df['phase_list'] = [[] for _ in range(len(df))]
+        df['phase_clean'] = ""
+
+    # Status
+    if 'status' in df.columns:
+        df['status_list'] = df['status'].apply(parse_listish)
+        df['status_clean'] = df['status_list'].apply(lambda xs: " / ".join(unique_preserve(xs)))
+    else:
+        df['status_list'] = [[] for _ in range(len(df))]
+        df['status_clean'] = ""
+
+    # Countries
+    if 'countries_normalized' in df.columns:
+        df['countries_list'] = df['countries_normalized'].apply(parse_listish)
+        df['countries_clean'] = df['countries_list'].apply(lambda xs: " • ".join(unique_preserve(xs)))
+    else:
+        df['countries_list'] = [[] for _ in range(len(df))]
+        df['countries_clean'] = ""
+
+    # Title (pick first non-empty, but keep list if you want to show all)
+    if 'trial_title' in df.columns:
+        df['title_list'] = df['trial_title'].apply(parse_listish)
+        df['trial_title_clean'] = df.apply(
+            lambda r: (r['title_list'][0] if r['title_list'] else (str(r['trial_title']) if pd.notna(r['trial_title']) else "")),
+            axis=1
+        )
+    else:
+        df['title_list'] = [[] for _ in range(len(df))]
+        df['trial_title_clean'] = ""
+
+
     return df
+
+
+def _norm_str(x):
+    return str(x).strip().lower() if pd.notna(x) else ""
+
+def _best_link(row):
+    # Prefer url; fall back to DOI link if present
+    if pd.notna(row.get("url")) and str(row["url"]).strip():
+        return str(row["url"]).strip()
+    doi = row.get("doi")
+    if pd.notna(doi) and str(doi).strip():
+        return f"https://doi.org/{str(doi).strip()}"
+    return None
+
+# pretty labels + order for work types
+_WORK_TYPE_LABEL = {
+    "journal": "Journal articles",
+    "conf_abstract": "Conference abstracts",
+    "poster": "Posters",
+    "preprint": "Preprints",
+    "whitepaper": "Whitepapers / decks",
+}
+_WORK_TYPE_ORDER = ["journal", "conf_abstract", "poster", "preprint", "whitepaper"]
+
+def render_publications_for_program(program_row, pubs_df: pd.DataFrame):
+    if pubs_df is None or pubs_df.empty:
+        return False
+
+    prog_id = program_row.get("program_id")
+    prog_name = _norm_str(program_row.get("program_name"))
+    comp_name = _norm_str(program_row.get("company_name"))
+
+    # 1) Primary match by program_id
+    m_id = pubs_df["program_id"].astype(str).eq(str(prog_id)) if "program_id" in pubs_df.columns else pd.Series([False]*len(pubs_df))
+
+    # 2) Fallbacks where some rows might be missing program_id but have program_name/company_name
+    m_pn = pubs_df.get("program_name").apply(_norm_str).eq(prog_name) if "program_name" in pubs_df.columns else pd.Series([False]*len(pubs_df))
+    m_cn = pubs_df.get("company_name").apply(_norm_str).str.contains(comp_name) if "company_name" in pubs_df.columns else pd.Series([False]*len(pubs_df))
+
+    sel = pubs_df[m_id | (m_pn & m_cn)]
+
+    if sel.empty:
+        return False
+
+    # Group by work_type and render
+    types_present = [wt for wt in _WORK_TYPE_ORDER if wt in sel["work_type"].dropna().str.lower().unique().tolist()]
+    other_types = sorted(set(sel["work_type"].dropna().str.lower()) - set(types_present))
+    groups = types_present + other_types
+
+    st.markdown("#### Publications")
+    # Optional: small chips by type
+    chips = []
+    for wt in groups:
+        count = (sel["work_type"].str.lower() == wt).sum()
+        label = _WORK_TYPE_LABEL.get(wt, wt.title())
+        chips.append(f"<span style='background:#2d3340; border:1px solid #444; color:#ffffff; padding:2px 8px;border-radius:12px;margin-right:6px;font-size:0.85rem;'>{label}: {count}</span>")
+    st.markdown(" ".join(chips), unsafe_allow_html=True)
+
+    # Detailed list
+    for wt in groups:
+        block = sel[sel["work_type"].str.lower() == wt]
+        if block.empty:
+            continue
+        st.markdown(f"**{_WORK_TYPE_LABEL.get(wt, wt.title())}**")
+        for _, r in block.sort_values(["year", "month"], ascending=[False, False]).iterrows():
+            title = str(r.get("title", "Untitled")).strip()
+            venue = str(r.get("venue", "")).strip()
+            year  = str(r.get("year", "")).strip()
+            link  = _best_link(r)
+            tail  = " — ".join([x for x in [venue, year] if x])
+            if link:
+                st.markdown(f"- [{title}]({link}){(' — ' + tail) if tail else ''}")
+            else:
+                st.markdown(f"- {title}{(' — ' + tail) if tail else ''}")
+    return True
+
 
 # -------------------------------
 # Plotly theme
@@ -275,6 +443,8 @@ if st.session_state.current_page == 'Overview':
 
         # Build normalized trials and cache in session
         data = st.session_state.data or {}
+        publications_df = pd.DataFrame(data.get('publications', []))
+        st.session_state.publications_df = publications_df
         trials_df_raw = pd.DataFrame(data.get('trials', []))
         st.session_state.trials_df_norm = normalize_trials(trials_df_raw)
 
@@ -438,7 +608,30 @@ elif st.session_state.current_page == 'Programs' and st.session_state.data:
     companies_df = pd.DataFrame(data.get('companies', []))
     trials_df_norm = st.session_state.trials_df_norm
 
+    # Build a cached lowercase blob to search across useful fields
+    _search_fields = [
+        'program_name', 'company_name', 'target_primary', 'indication_primary',
+        'mechanism_of_action_detailed_final', 'biological_rationale_final'
+    ]
+    for c in _search_fields:
+        if c not in programs_df.columns:
+            programs_df[c] = ""
+
+    programs_df['_search_blob'] = (
+        programs_df[_search_fields]
+        .fillna("")
+        .astype(str)
+        .agg(" ".join, axis=1)
+        .str.lower()
+    )
+
+
     st.title("Drug Development Programs")
+    search_query = st.text_input(
+        "Search programs…",
+        value="",
+        placeholder="Try: 'liposarcoma MDM2 Rain' or 'KRAS G12C Amgen'",
+    )
 
     # Filters
     cols = st.columns(6)
@@ -473,6 +666,14 @@ elif st.session_state.current_page == 'Programs' and st.session_state.data:
 
     # Apply filters
     filtered_df = programs_df.copy()
+    if search_query.strip():
+        terms = [t.lower() for t in search_query.split() if t.strip()]
+        if terms:
+            mask = pd.Series(True, index=filtered_df.index)
+            blob = filtered_df['_search_blob']
+            for t in terms:
+                mask &= blob.str.contains(t, regex=False)
+            filtered_df = filtered_df[mask]
     if selected_indication != 'All':
         filtered_df = filtered_df[filtered_df['indication_group'] == selected_indication]
     if selected_target != 'All':
@@ -547,6 +748,10 @@ elif st.session_state.current_page == 'Programs' and st.session_state.data:
             st.markdown(f"**Key Publications:** {safe_get(program, 'key_scientific_paper')}")
             st.markdown(f"**Data Quality Index:** {safe_get(program, 'data_quality_index')}")
 
+            # --- Publications (by work_type) ---
+            pubs_df = st.session_state.get("publications_df", pd.DataFrame())
+            _ = render_publications_for_program(program, pubs_df)
+
             red_flags = safe_get(program, 'red_flags')
             if red_flags != 'N/A':
                 st.warning(f"**Risk Factors:** {red_flags}")
@@ -558,6 +763,8 @@ elif st.session_state.current_page == 'Companies' and st.session_state.data:
     data = st.session_state.data
     companies_df = pd.DataFrame(data.get('companies', []))
     programs_df  = pd.DataFrame(data.get('programs',  []))
+    pubs_df = st.session_state.get("publications_df", pd.DataFrame())
+
     trials_df_norm = st.session_state.trials_df_norm
 
     st.title("Companies")
@@ -665,6 +872,7 @@ elif st.session_state.current_page == 'Companies' and st.session_state.data:
 
                             st.markdown("**Biological Rationale:** " + safe_get(program, 'biological_rationale_final'))
                             st.markdown("**Mechanism of Action:** " + safe_get(program, 'mechanism_of_action_detailed_final'))
+                            _  = render_publications_for_program(program, pubs_df)
 
                             prog_trials = pd.DataFrame()
                             if not trials_df_norm.empty:
@@ -707,31 +915,50 @@ elif st.session_state.current_page == 'Clinical Trials' and st.session_state.dat
     if trials_df_norm.empty:
         st.info("No trial data available.")
     else:
-        # Filters
+        trials_df_view = trials_df_norm.copy()
+
+        # Build atomic option sets from the *_list columns
+        phase_options = ['All']
+        if 'phase_list' in trials_df_view.columns:
+            phase_atomic = sorted({p for lst in trials_df_view['phase_list'] for p in (lst or [])})
+            phase_options += phase_atomic
+
+        status_options = ['All']
+        if 'status_list' in trials_df_view.columns:
+            status_atomic = sorted({s for lst in trials_df_view['status_list'] for s in (lst or [])})
+            status_options += status_atomic
+
+        indication_options = ['All'] + sorted(trials_df_view['indication'].dropna().unique()) if 'indication' in trials_df_view.columns else ['All']
+        company_options   = ['All'] + sorted(trials_df_view['company_name'].dropna().unique()) if 'company_name' in trials_df_view.columns else ['All']
+
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            indications = ['All'] + sorted([x for x in trials_df_norm['indication'].dropna().unique()]) if 'indication' in trials_df_norm.columns else ['All']
-            selected_indication = st.selectbox("Indication", indications)
+            selected_indication = st.selectbox("Indication", indication_options)
         with col2:
-            phases = ['All'] + sorted([x for x in trials_df_norm['phase'].dropna().unique()]) if 'phase' in trials_df_norm.columns else ['All']
-            selected_phase = st.selectbox("Phase", phases)
+            selected_phase = st.selectbox("Phase", phase_options)
         with col3:
-            statuses = ['All'] + sorted([x for x in trials_df_norm['status'].dropna().unique()]) if 'status' in trials_df_norm.columns else ['All']
-            selected_status = st.selectbox("Status", statuses)
+            selected_status = st.selectbox("Status", status_options)
         with col4:
-            companies = ['All'] + sorted([x for x in trials_df_norm['company_name'].dropna().unique()]) if 'company_name' in trials_df_norm.columns else ['All']
-            selected_company = st.selectbox("Sponsor", companies)
+            selected_company = st.selectbox("Sponsor", company_options)
 
-        # Apply filters
-        filtered_trials = trials_df_norm.copy()
+
+        filtered_trials = trials_df_view.copy()
+
         if selected_indication != 'All' and 'indication' in filtered_trials.columns:
             filtered_trials = filtered_trials[filtered_trials['indication'] == selected_indication]
-        if selected_phase != 'All' and 'phase' in filtered_trials.columns:
-            filtered_trials = filtered_trials[filtered_trials['phase'] == selected_phase]
-        if selected_status != 'All' and 'status' in filtered_trials.columns:
-            filtered_trials = filtered_trials[filtered_trials['status'] == selected_status]
+
+        if selected_phase != 'All' and 'phase_list' in filtered_trials.columns:
+            filtered_trials = filtered_trials[filtered_trials['phase_list'].apply(lambda L: selected_phase in (L or []))]
+
+        if selected_status != 'All' and 'status_list' in filtered_trials.columns:
+            filtered_trials = filtered_trials[filtered_trials['status_list'].apply(lambda L: selected_status in (L or []))]
+
         if selected_company != 'All' and 'company_name' in filtered_trials.columns:
             filtered_trials = filtered_trials[filtered_trials['company_name'] == selected_company]
+
+        dedup = filtered_trials.drop_duplicates(subset=['trial_key'])
+        st.markdown(f"### Results: {len(dedup)} trials")
+
 
         dedup = filtered_trials.drop_duplicates(subset=['trial_key'])
         st.markdown(f"### Results: {len(dedup)} trials")
@@ -740,23 +967,22 @@ elif st.session_state.current_page == 'Clinical Trials' and st.session_state.dat
         for _, trial in dedup.iterrows():
             title_left = (trial['nct_id'] if pd.notna(trial['nct_id']) and trial['nct_id'] else trial['trial_label'])
             sponsor_disp = trial['company_name'].title() if pd.notna(trial.get('company_name')) else 'Unknown'
+
             with st.expander(f"{title_left} - {sponsor_disp}"):
-                # Dedicated link line
-                # Accept both nct_id or original trial_id in case some are missing NCTs
                 link_source = trial.get('nct_id') or trial.get('trial_id')
                 st.markdown(f"**ClinicalTrials.gov:** {trial_links(link_source)}")
 
-                col1, col2 = st.columns(2)
-                with col1:
+                c1, c2 = st.columns(2)
+                with c1:
                     st.markdown(f"**Program:** {safe_get(trial, 'program_name')}")
-                    st.markdown(f"**Phase:** {safe_get(trial, 'phase')}")
-                    st.markdown(f"**Status:** {safe_get(trial, 'status')}")
+                    # use clean fields:
+                    st.markdown(f"**Status:** {trial.get('status_clean','')}")
                     st.markdown(f"**Indication:** {safe_get(trial, 'indication')}")
-                with col2:
+                with c2:
                     st.markdown(f"**Sponsor:** {safe_get(trial, 'sponsor')}")
-                    st.markdown(f"**Target Enrollment:** {safe_get(trial, 'enrollment_target')}")
-                    st.markdown(f"**Countries:** {safe_get(trial, 'countries_normalized')}")
-                    st.markdown(f"**Title:** {safe_get(trial, 'trial_title')}")
+                    st.markdown(f"**Countries:** {trial.get('countries_clean','')}")
+                    st.markdown(f"**Title:** {trial.get('trial_title_clean','')}")
+
 
 # =========================================================
 # COMPARE
